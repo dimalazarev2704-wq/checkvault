@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+cryptography
+boto3
+pillow
+pyotp
+itsdangerous
+qrcode

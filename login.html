@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in - CheckVault</title>
+<style>
+:root{--ink:#1b2a2f;--bg:#eef2f1;--panel:#fff;--line:#cfd9d6;--accent:#1f6f5c;--warn:#b3402a;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--ink:#e6efed;--bg:#121b1d;--panel:#1a2528;--line:#2f4045;--accent:#4fb59b;--warn:#e38a76;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
+form{width:min(360px,92vw);display:grid;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:24px}
+h1{margin:0;font-size:1.4rem}
+label{display:grid;gap:4px;font-size:.9rem}
+input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit}
+input:focus-visible,button:focus-visible{outline:3px solid var(--accent);outline-offset:1px}
+button{font:inherit;padding:10px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer}
+button:disabled{opacity:.6}
+#err{margin:0;min-height:1.4em;color:var(--warn)}
+</style>
+</head>
+<body>
+<form id="f">
+  <h1>Sign in to CheckVault</h1>
+  <label>Username<input name="username" autocomplete="username" required></label>
+  <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+  <label>6-digit code from your authenticator app<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" required></label>
+  <p id="err" role="alert"></p>
+  <button id="go">Sign in</button>
+</form>
+<script>
+document.getElementById("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const go = document.getElementById("go"), err = document.getElementById("err");
+  go.disabled = true; err.textContent = "";
+  const r = await fetch("/login", {method: "POST", body: new FormData(e.target)});
+  if (r.ok) { location = "/"; return; }
+  err.textContent = (await r.json()).detail || "Sign in failed";
+  e.target.code.value = ""; go.disabled = false;
+});
+</script>
+</body>
+</html>

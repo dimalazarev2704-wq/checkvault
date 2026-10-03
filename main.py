@@ -22,14 +22,27 @@ if BUCKET:
     from botocore.config import Config
     s3 = boto3.client("s3", endpoint_url=os.environ.get("S3_ENDPOINT"),
                       config=Config(request_checksum_calculation="when_required",
-                                    response_checksum_validation="when_required"))
+                                    response_checksum_validation="when_required",
+                                    retries={"max_attempts": 4, "mode": "standard"}))
+
+    def _no_expect(request, **kwargs):
+        # Backblaze answers "Expect: 100-continue" in a way newer Python/urllib3 cannot parse (BadStatusLine).
+        try:
+            request.headers.pop("Expect", None)
+        except Exception:
+            pass
+
+    s3.meta.events.register("before-send.s3", _no_expect)
 else:
     DATA.mkdir(exist_ok=True)
 
 
 def put(key, blob):
     if BUCKET:
-        s3.put_object(Bucket=BUCKET, Key=key, Body=blob)
+        try:
+            s3.put_object(Bucket=BUCKET, Key=key, Body=blob)
+        except Exception:
+            raise HTTPException(502, "Could not reach cloud storage. Please try again.")
     else:
         p = DATA / key
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +64,10 @@ def get(key):
 
 def remove(key):
     if BUCKET:
-        s3.delete_object(Bucket=BUCKET, Key=key)
+        try:
+            s3.delete_object(Bucket=BUCKET, Key=key)
+        except Exception:
+            raise HTTPException(502, "Could not reach cloud storage. Please try again.")
     else:
         (DATA / key).unlink(missing_ok=True)
 
@@ -139,6 +155,11 @@ def auth(request: Request):
 
 
 app = FastAPI(dependencies=[Depends(auth)], docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request, exc):
+    return JSONResponse({"detail": "Something went wrong on the server. Please try again."}, status_code=500)
 
 
 @app.middleware("http")

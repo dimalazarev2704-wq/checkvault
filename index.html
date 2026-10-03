@@ -252,7 +252,12 @@ document.addEventListener("submit", async e => {
   btn.disabled = true; msg.textContent = "Encrypting and uploading...";
   try {
     const r = await fetch("/api/checks", {method: "POST", body: fd});
-    if (!r.ok) { const j = await r.json(); throw new Error(typeof j.detail === "string" ? j.detail : "Please check the fields and try again"); }
+    if (!r.ok) {
+      let m = "Please check the fields and try again";
+      try { const j = await r.json(); if (typeof j.detail === "string") m = j.detail; }
+      catch (e) { m = "The server had a problem (" + r.status + "). Please try again."; }
+      throw new Error(m);
+    }
     f.reset(); f.elements.date.value = today; $("#ok-front").textContent = ""; $("#ok-back").textContent = ""; msg.textContent = "Check saved.";
     await load();
   } catch (err) { msg.textContent = "Could not save: " + err.message; }

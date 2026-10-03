@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CheckVault</title>
+<script>try{var _e=sessionStorage.getItem("cv-enter");if(_e){var _p=_e.split(","),_h=document.documentElement;_h.classList.add("enter");_h.style.setProperty("--vx",_p[0]+"%");_h.style.setProperty("--vy",_p[1]+"%");sessionStorage.removeItem("cv-enter");setTimeout(function(){_h.classList.remove("enter")},1800)}}catch(x){}</script>
+<style>
+:root{--bg:#f5f4ef;--side:#efeee8;--card:#fff;--line:#e4e2d9;--ink:#1f2a24;--mute:#6b766f;--accent:#2f6b4f;--on:#fff;--h0:#eeede7;--h1:#d6e8dc;--h2:#b4d4c0;--h3:#82b697;--h4:#3f7a5c;--warn:#b3402a;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#111a16;--side:#16211c;--card:#1a2620;--line:#2a3a32;--ink:#e6efe9;--mute:#97a79d;--accent:#5fb58a;--on:#0d1612;--h0:#202c26;--h1:#223a2d;--h2:#2e5440;--h3:#3f7a5c;--h4:#63b88c;--warn:#e38a76;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+h1{margin:0;font-size:1.5rem}h2{margin:0 0 12px;font-size:1.05rem}p{margin:0}
+.mute{color:var(--mute);font-size:.9rem}
+.ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{display:grid;grid-template-columns:200px 1fr;min-height:100vh}
+aside{background:var(--side);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;padding:0 8px 16px}
+.mark{width:24px;height:24px;border-radius:7px;background:var(--accent);display:grid;place-items:center}
+.mark svg{width:14px;height:14px;fill:none;stroke:var(--on);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+#nav{display:contents}
+aside button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:8px;background:none;color:var(--ink);font:inherit;cursor:pointer;text-align:left}
+aside button.on{background:var(--h1);font-weight:600}
+#out{margin-top:auto}
+main{padding:22px 26px 40px;max-width:1100px;width:100%;display:grid;gap:16px;align-content:start}
+header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.btn,.ghost{font:inherit;border-radius:8px;cursor:pointer;padding:9px 14px}
+.btn{border:0;background:var(--accent);color:var(--on);display:flex;gap:6px;align-items:center;white-space:nowrap}
+.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}.red{color:var(--warn)}
+button:disabled{opacity:.6}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{display:flex;gap:12px;align-items:center}.stat b{display:block;font-size:1.3rem;line-height:1.2}
+.dot{width:38px;height:38px;border-radius:50%;background:var(--h1);color:var(--accent);display:grid;place-items:center}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.bars{display:flex;gap:10px;height:170px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;text-align:center;font-size:.8rem;color:var(--mute)}
+.bar i{display:block;height:calc((100% - 24px) * var(--r));min-height:3px;background:var(--accent);border-radius:6px 6px 0 0;margin-bottom:4px}
+.row{display:grid;grid-template-columns:96px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row img{width:96px;height:52px;object-fit:cover;border-radius:6px;background:var(--h0);cursor:zoom-in}
+.acts{display:flex;gap:6px}
+.lead{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:center;padding:6px 0}
+.track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--h0)}.track i{display:block;height:100%;border-radius:4px;background:var(--accent)}
+form{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+label{display:grid;gap:4px;font-size:.9rem}.wide{grid-column:1/-1}
+input{font:inherit;padding:9px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;min-width:0}
+.bar2{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.bar2 h2{margin:0}
+#q{flex:1;min-width:160px}
+.calwrap{display:grid;grid-template-columns:1fr 300px;gap:16px}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.cal.head span{text-align:center;font-size:.8rem;color:var(--mute)}
+.day{aspect-ratio:1.15;min-height:38px;border:0;border-radius:8px;background:var(--h0);color:var(--ink);font:inherit;text-align:left;padding:6px 8px;cursor:pointer}
+.l1{background:var(--h1)}.l2{background:var(--h2)}.l3{background:var(--h3)}.l4{background:var(--h4);color:var(--on)}
+.today{font-weight:700}.day.sel{outline:2px solid var(--accent);outline-offset:1px}
+dialog{max-width:95vw;padding:8px;border:0;border-radius:10px}dialog img{max-width:100%;max-height:85vh;display:block}
+.pick{display:grid;gap:6px;font-size:.9rem}.pick .acts{align-items:center}
+#cam video{width:min(92vw,520px);max-height:70vh;background:#000;border-radius:8px;display:block}
+.camacts{display:flex;gap:8px;justify-content:center;margin-top:10px}
+@media (max-width:760px){
+ .app{grid-template-columns:1fr}
+ aside{position:fixed;inset:auto 0 0 0;top:auto;height:auto;flex-direction:row;justify-content:space-around;padding:6px;border-right:0;border-top:1px solid var(--line);z-index:5}
+ aside button{flex-direction:column;gap:2px;font-size:.75rem;justify-content:center;text-align:center;padding:6px 4px}
+ .logo{display:none}#out{margin-top:0}
+ main{padding:16px 14px 90px}.two,.calwrap{grid-template-columns:1fr}
+ .row{grid-template-columns:80px 1fr}.row img{width:80px}.acts{grid-column:1/-1}
+}
+#veil{position:fixed;inset:0;background:var(--bg);z-index:50;pointer-events:none;opacity:0}
+html.enter #veil{opacity:1;animation:veil .95s .1s cubic-bezier(.65,0,.35,1) forwards}
+@keyframes veil{from{clip-path:circle(150vmax at var(--vx,50%) var(--vy,45%))}to{clip-path:circle(0 at var(--vx,50%) var(--vy,45%))}}
+.rise{animation:rise .6s cubic-bezier(.2,.7,.2,1) both;animation-delay:var(--d,0ms)}
+html.enter .rise{animation-delay:calc(var(--d,0ms) + .55s)}
+@keyframes rise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+.rise .bar i{transform-origin:bottom;animation:grow .9s .3s cubic-bezier(.2,.7,.2,1) both}
+@keyframes grow{from{transform:scaleY(0)}}
+html.enter aside{animation:sideIn .7s .45s cubic-bezier(.2,.7,.2,1) both}
+@keyframes sideIn{from{opacity:0;transform:translateX(-26px)}}
+@keyframes sideUp{from{opacity:0;transform:translateY(26px)}}
+@media (max-width:760px){html.enter aside{animation-name:sideUp}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#veil{display:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="logo"><span class="mark"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg></span>CheckVault</div>
+    <div id="nav"></div>
+    <button id="out"></button>
+  </aside>
+  <main>
+    <header>
+      <div><h1 id="h1"></h1><p id="sub" class="mute"></p></div>
+      <button class="btn" data-go="checks"><span id="plus"></span>Add check</button>
+    </header>
+    <div id="view" style="display:contents"></div>
+  </main>
+</div>
+<div id="veil"></div>
+<dialog id="viewer"><img alt="Check image"></dialog>
+<dialog id="cam"><video id="vid" autoplay playsinline muted></video><p id="camerr" class="mute" role="alert"></p>
+  <div class="camacts"><button class="btn" id="snap">Take photo</button><button class="ghost" id="camx">Cancel</button></div></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const _fetch = fetch;
+window.fetch = async (...a) => { const r = await _fetch(...a); if (r.status === 401 && !String(a[0]).startsWith("/login")) location = "/login"; return r; };
+const money = n => n.toLocaleString(undefined, {style: "currency", currency: "USD"});
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pad = n => String(n).padStart(2, "0");
+const fmt = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const sum = a => a.reduce((t, c) => t + c.amount, 0);
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const ICON = {
+  overview: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  checks: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  out: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>'
+};
+const ico = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
+const TITLES = {
+  overview: ["Your vault at a glance", "Every check you've saved, in one place."],
+  checks: ["Checks", "Add a new check or search the ones you've saved."],
+  calendar: ["Check calendar", "See when your checks came in, day by day."]
+};
+const LABEL = {overview: "Overview", checks: "Checks", calendar: "Calendar"};
+const EMPTY = '<p class="mute">Nothing here yet. Add your first check on the Checks page.</p>';
+
+const now = new Date(), today = fmt(now);
+let checks = [], view = "overview", cal = {y: now.getFullYear(), m: now.getMonth()}, sel = today;
+
+const row = (c, del) => `<article class="row">
+  <img src="/api/checks/${c.id}/thumb" alt="Front of check to ${esc(c.payee)}" data-id="${c.id}" data-side="front">
+  <div><b>${esc(c.payee)}</b> ${money(c.amount)}<br><span class="mute">${c.date}${c.check_number ? " · #" + esc(c.check_number) : ""}${c.memo ? " · " + esc(c.memo) : ""}</span></div>
+  <div class="acts">${c.has_back ? `<button class="ghost" data-id="${c.id}" data-side="back">View back</button>` : ""}${del && c.has_back ? `<button class="ghost red" data-delback="${c.id}">Delete back</button>` : ""}${del ? `<button class="ghost red" data-del="${c.id}">Delete check</button>` : ""}</div>
+</article>`;
+
+function viewOverview() {
+  const wk = new Date(); wk.setDate(wk.getDate() - 6);
+  const week = checks.filter(c => c.date >= fmt(wk) && c.date <= today);
+  const month = checks.filter(c => c.date.startsWith(today.slice(0, 7)));
+  const stats = [
+    ["checks", "Checks saved", checks.length], ["calendar", "This month", money(sum(month))],
+    ["overview", "Last 7 days", week.length], ["checks", "Average check", money(checks.length ? sum(checks) / checks.length : 0)]
+  ];
+  const months = [...Array(6)].map((_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
+    return {label: MONTHS[d.getMonth()].slice(0, 3), total: sum(checks.filter(c => c.date.startsWith(fmt(d).slice(0, 7))))};
+  });
+  const max = Math.max(...months.map(m => m.total), 1);
+  const by = {};
+  checks.forEach(c => { const k = c.payee.trim().toLowerCase(); by[k] = by[k] || {name: c.payee, total: 0, n: 0}; by[k].total += c.amount; by[k].n++; });
+  const top = Object.values(by).sort((a, b) => b.total - a.total).slice(0, 4), tmax = top[0] ? top[0].total : 1;
+  $("#view").innerHTML = `
+  <div class="stats">${stats.map(s => `<div class="card stat"><span class="dot">${ico(s[0])}</span><div><b>${s[2]}</b><span class="mute">${s[1]}</span></div></div>`).join("")}</div>
+  <div class="two">
+    <section class="card"><h2>Total by month</h2><div class="bars">${months.map(m => `<div class="bar" title="${money(m.total)}"><i style="--r:${m.total / max}"></i>${m.label}</div>`).join("")}</div></section>
+    <section class="card"><h2>Recent checks</h2>${checks.length ? checks.slice(0, 4).map(c => row(c)).join("") : EMPTY}</section>
+  </div>
+  <section class="card"><h2>Top payees</h2>${top.length ? top.map(p => `<div class="lead"><span>${esc(p.name)}</span><span class="mute">${p.n} check${p.n > 1 ? "s" : ""}</span><b>${money(p.total)}</b><div class="track"><i style="width:${Math.round(p.total / tmax * 100)}%"></i></div></div>`).join("") : EMPTY}</section>`;
+}
+
+function viewChecks() {
+  $("#view").innerHTML = `
+  <section class="card"><h2>Add a check</h2>
+    <form id="form">
+      <div class="pick"><label for="f-front">Front of check</label><input id="f-front" type="file" name="front" accept="image/*" required>
+        <div class="acts"><button type="button" class="ghost" data-cam="front">Use camera</button><span class="mute" id="ok-front"></span></div></div>
+      <div class="pick"><label for="f-back">Back of check (optional)</label><input id="f-back" type="file" name="back" accept="image/*">
+        <div class="acts"><button type="button" class="ghost" data-cam="back">Use camera</button><span class="mute" id="ok-back"></span></div></div>
+      <label>Date<input type="date" name="date" required></label>
+      <label>Payee<input name="payee" maxlength="100" required></label>
+      <label>Amount ($)<input name="amount" type="number" step="0.01" min="0" required></label>
+      <label>Check number<input name="check_number" maxlength="30"></label>
+      <label class="wide">Memo<input name="memo" maxlength="200"></label>
+      <div class="wide bar2"><p id="msg" class="mute" role="status"></p><button class="btn" id="save">Save check</button></div>
+    </form></section>
+  <section class="card"><div class="bar2"><h2>Saved checks</h2><input id="q" type="search" placeholder="Search payee, amount, check number" aria-label="Search checks"><span id="total" class="mute"></span></div><div id="list"></div></section>`;
+  $("#form").elements.date.value = today;
+  list();
+}
+
+function list() {
+  const q = ($("#q") ? $("#q").value : "").trim().toLowerCase();
+  const rows = checks.filter(c => !q || [c.payee, c.check_number, c.memo, String(c.amount)].join(" ").toLowerCase().includes(q));
+  $("#total").textContent = rows.length ? `${rows.length} checks, ${money(sum(rows))}` : "";
+  $("#list").innerHTML = rows.length ? rows.map(c => row(c, true)).join("") : `<p class="mute">${checks.length ? "No checks match that search." : "No checks yet. Add your first one above."}</p>`;
+}
+
+function viewCalendar() {
+  const {y, m} = cal, key = `${y}-${pad(m + 1)}`;
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate();
+  const cnt = {}; checks.forEach(c => cnt[c.date] = (cnt[c.date] || 0) + 1);
+  let cells = "<span></span>".repeat(lead);
+  for (let d = 1; d <= days; d++) {
+    const k = `${key}-${pad(d)}`, n = cnt[k] || 0;
+    cells += `<button class="day l${Math.min(n, 4)}${k === sel ? " sel" : ""}${k === today ? " today" : ""}" data-day="${k}" aria-label="${k}: ${n} checks">${d}</button>`;
+  }
+  const mc = checks.filter(c => c.date.startsWith(key)), dc = checks.filter(c => c.date === sel);
+  $("#view").innerHTML = `<div class="calwrap">
+  <section class="card"><div class="bar2">
+    <div><button class="ghost" data-mv="-1" aria-label="Previous month">&lsaquo;</button> <button class="ghost" data-mv="1" aria-label="Next month">&rsaquo;</button></div>
+    <h2>${MONTHS[m]} ${y}</h2><button class="ghost" data-mv="0">Today</button></div>
+    <div class="cal head">${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d => `<span>${d}</span>`).join("")}</div>
+    <div class="cal">${cells}</div>
+    <p class="mute">${mc.length} checks this month, ${money(sum(mc))}. Darker days have more checks.</p></section>
+  <section class="card"><h2>${sel}</h2>${dc.length ? dc.map(c => row(c)).join("") : '<p class="mute">No checks on this day.</p>'}</section></div>`;
+}
+
+function go(v, animate = true) {
+  view = v;
+  $("#h1").textContent = TITLES[v][0]; $("#sub").textContent = TITLES[v][1];
+  document.querySelectorAll("[data-nav]").forEach(b => { b.classList.toggle("on", b.dataset.nav === v); b.setAttribute("aria-current", b.dataset.nav === v ? "page" : "false"); });
+  ({overview: viewOverview, checks: viewChecks, calendar: viewCalendar})[v]();
+  if (animate) [...$("#view").children].forEach((el, i) => { el.style.setProperty("--d", i * 80 + "ms"); el.classList.add("rise"); });
+}
+
+let first = true;
+async function load() {
+  let r = null;
+  try { r = await fetch("/api/checks"); } catch (e) {}
+  checks = r && r.ok ? await r.json() : [];
+  if (view === "checks" && !first) list(); else go(view, first);
+  first = false;
+}
+
+document.addEventListener("click", async e => {
+  const t = e.target.closest("button,img"); if (!t) return;
+  const d = t.dataset;
+  if (d.go) go(d.go);
+  if (d.day) { sel = d.day; viewCalendar(); }
+  if (d.mv !== undefined) {
+    if (d.mv === "0") { cal = {y: now.getFullYear(), m: now.getMonth()}; sel = today; }
+    else { const x = new Date(cal.y, cal.m + Number(d.mv), 1); cal = {y: x.getFullYear(), m: x.getMonth()}; }
+    viewCalendar();
+  }
+  if (d.side) { $("#viewer img").src = `/api/checks/${d.id}/${d.side}`; $("#viewer").showModal(); }
+  if (d.cam) openCam(d.cam);
+  if (d.delback && confirm("Delete just the back image of this check? The front stays.")) { await fetch(`/api/checks/${d.delback}/back`, {method: "DELETE"}); load(); }
+  if (d.del && confirm("Delete this check and its images? This can't be undone.")) { await fetch(`/api/checks/${d.del}`, {method: "DELETE"}); load(); }
+  if (t.id === "out") { await fetch("/logout", {method: "POST"}); location = "/login"; }
+});
+$("#viewer").addEventListener("click", () => $("#viewer").close());
+document.addEventListener("input", e => { if (e.target.id === "q") list(); });
+
+document.addEventListener("submit", async e => {
+  if (e.target.id !== "form") return;
+  e.preventDefault();
+  const f = e.target, fd = new FormData(f), msg = $("#msg"), btn = $("#save");
+  if (!fd.get("back").size) fd.delete("back");
+  btn.disabled = true; msg.textContent = "Encrypting and uploading...";
+  try {
+    const r = await fetch("/api/checks", {method: "POST", body: fd});
+    if (!r.ok) { const j = await r.json(); throw new Error(typeof j.detail === "string" ? j.detail : "Please check the fields and try again"); }
+    f.reset(); f.elements.date.value = today; $("#ok-front").textContent = ""; $("#ok-back").textContent = ""; msg.textContent = "Check saved.";
+    await load();
+  } catch (err) { msg.textContent = "Could not save: " + err.message; }
+  btn.disabled = false;
+});
+
+let camTarget = null, stream = null;
+async function openCam(name) {
+  camTarget = name; $("#camerr").textContent = ""; $("#cam").showModal();
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: "environment"}, width: {ideal: 2000}}, audio: false});
+    $("#vid").srcObject = stream;
+  } catch (e) { $("#camerr").textContent = "Couldn't open the camera. Allow camera access in your browser, or choose a file instead."; }
+}
+function stopCam() { if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; } $("#vid").srcObject = null; }
+$("#cam").addEventListener("close", stopCam);
+$("#camx").addEventListener("click", () => $("#cam").close());
+$("#snap").addEventListener("click", () => {
+  const v = $("#vid"); if (!v.videoWidth) return;
+  const c = document.createElement("canvas"); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  c.toBlob(b => {
+    const dt = new DataTransfer(); dt.items.add(new File([b], camTarget + ".jpg", {type: "image/jpeg"}));
+    $("#form").elements[camTarget].files = dt.files;
+    $("#ok-" + camTarget).textContent = "Photo ready \u2713";
+    $("#cam").close();
+  }, "image/jpeg", 0.9);
+});
+document.addEventListener("change", e => {
+  if (e.target.type === "file") $("#ok-" + e.target.name).textContent = e.target.files.length ? "File chosen \u2713" : "";
+});
+
+$("#nav").innerHTML = Object.keys(TITLES).map(k => `<button data-go="${k}" data-nav="${k}">${ico(k)}<span>${LABEL[k]}</span></button>`).join("");
+$("#out").innerHTML = ico("out") + "<span>Sign out</span>";
+$("#plus").innerHTML = ico("plus");
+$("#h1").textContent = TITLES.overview[0]; $("#sub").textContent = TITLES.overview[1];
+load();
+</script>
+</body>
+</html>

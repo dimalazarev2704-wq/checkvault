@@ -1,4 +1,4 @@
-import hashlib, hmac, io, json, math, os, secrets, time, urllib.parse, urllib.request, uuid
+import hashlib, hmac, io, json, math, os, secrets, threading, time, urllib.parse, urllib.request, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,7 +41,8 @@ def put(key, blob):
     if BUCKET:
         try:
             s3.put_object(Bucket=BUCKET, Key=key, Body=blob)
-        except Exception:
+        except Exception as e:
+            print("STORAGE ERROR (upload):", type(e).__name__, str(e)[:400], flush=True)
             raise HTTPException(502, "Could not reach cloud storage. Please try again.")
     else:
         p = DATA / key
@@ -66,7 +67,8 @@ def remove(key):
     if BUCKET:
         try:
             s3.delete_object(Bucket=BUCKET, Key=key)
-        except Exception:
+        except Exception as e:
+            print("STORAGE ERROR (delete):", type(e).__name__, str(e)[:400], flush=True)
             raise HTTPException(502, "Could not reach cloud storage. Please try again.")
     else:
         (DATA / key).unlink(missing_ok=True)
@@ -109,7 +111,8 @@ def tg_call(method, payload):
 def tg_close(r, text):
     """Replace a request's Telegram message with a final note, which also removes its buttons."""
     if r.get("chat") and r.get("msg"):
-        tg_call("editMessageText", {"chat_id": r["chat"], "message_id": r["msg"], "text": text})
+        tg_call("editMessageText", {"chat_id": r["chat"], "message_id": r["msg"], "text": text,
+                                    "reply_markup": {"inline_keyboard": []}})
         r["msg"] = None
 
 
@@ -294,11 +297,33 @@ def telegram_webhook(request: Request, update: dict = Body(...)):
     return {"ok": True}
 
 
+def _storage_check():
+    import platform
+    print("Python version:", platform.python_version(), flush=True)
+    if not BUCKET:
+        print("STORAGE CHECK: no bucket set, using local folder", flush=True)
+        return
+    try:
+        s3.put_object(Bucket=BUCKET, Key="healthcheck.txt", Body=b"ok")
+        print("STORAGE CHECK: upload to Backblaze works", flush=True)
+    except Exception as e:  # the message holds the endpoint and bucket name, never the keys
+        print("STORAGE CHECK FAILED:", type(e).__name__, str(e)[:400], flush=True)
+
+
+@app.on_event("startup")
+def storage_check():
+    threading.Thread(target=_storage_check, daemon=True).start()
+
+
+def _set_webhook():
+    tg_call("setWebhook", {"url": f"{PUBLIC_URL}/telegram/webhook", "secret_token": TG_SECRET,
+                           "allowed_updates": ["callback_query"], "drop_pending_updates": True})
+
+
 @app.on_event("startup")
 def register_webhook():
     if TG_TOKEN and PUBLIC_URL:
-        tg_call("setWebhook", {"url": f"{PUBLIC_URL}/telegram/webhook", "secret_token": TG_SECRET,
-                               "allowed_updates": ["callback_query"], "drop_pending_updates": True})
+        threading.Thread(target=_set_webhook, daemon=True).start()
 
 
 @app.post("/logout")
@@ -354,7 +379,7 @@ def jpeg(img, size, quality):
 
 
 @app.post("/api/checks")
-async def add_check(
+def add_check(
     date: str = Form(...), payee: str = Form(...), amount: float = Form(...),
     check_number: str = Form(""), memo: str = Form(""),
     front: UploadFile = File(...), back: UploadFile = File(None),
@@ -373,7 +398,7 @@ async def add_check(
     for side, f in (("front", front), ("back", back)):
         if f is None:
             continue
-        blob = await f.read()
+        blob = f.file.read()
         if len(blob) > MAX_BYTES:
             raise HTTPException(413, "Image over 10 MB")
         img = open_image(blob)

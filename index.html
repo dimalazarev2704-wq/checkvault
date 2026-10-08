@@ -244,11 +244,29 @@ document.addEventListener("click", async e => {
 $("#viewer").addEventListener("click", () => $("#viewer").close());
 document.addEventListener("input", e => { if (e.target.id === "q") list(); });
 
+// Gentle warnings before saving. Everything is checked here in the browser against the checks already loaded.
+function warnings(fd) {
+  const payee = String(fd.get("payee")).trim().toLowerCase(), amount = Number(fd.get("amount"));
+  const date = String(fd.get("date")), num = String(fd.get("check_number")).trim(), out = [];
+  const same = checks.filter(c => c.payee.trim().toLowerCase() === payee);
+  const dup = same.find(c => (Math.round(c.amount * 100) === Math.round(amount * 100) && c.date === date) || (num && c.check_number === num));
+  if (dup) out.push(`Possible duplicate: you already saved a check to ${dup.payee} for ${money(dup.amount)} dated ${dup.date}${dup.check_number ? " (#" + dup.check_number + ")" : ""}.`);
+  if (same.length >= 3) {
+    const v = same.map(c => c.amount).sort((a, b) => a - b), n = v.length;
+    const med = n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2;
+    if (med > 0 && (amount > med * 3 || amount < med / 3) && Math.abs(amount - med) >= 20)
+      out.push(`Unusual amount: your ${n} other checks to ${same[0].payee} are usually about ${money(med)}, and this one is ${money(amount)}.`);
+  }
+  return out;
+}
+
 document.addEventListener("submit", async e => {
   if (e.target.id !== "form") return;
   e.preventDefault();
   const f = e.target, fd = new FormData(f), msg = $("#msg"), btn = $("#save");
   if (!fd.get("back").size) fd.delete("back");
+  const warn = warnings(fd);
+  if (warn.length && !confirm(warn.join("\n\n") + "\n\nSave it anyway?")) { msg.textContent = "Not saved. Fix it and press Save again."; return; }
   btn.disabled = true; msg.textContent = "Encrypting and uploading...";
   try {
     const r = await fetch("/api/checks", {method: "POST", body: fd});

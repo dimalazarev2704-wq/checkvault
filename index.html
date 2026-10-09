@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CheckVault</title>
+<script src="/device.js"></script>
 <script>try{var _e=sessionStorage.getItem("cv-enter");if(_e){var _p=_e.split(","),_h=document.documentElement;_h.classList.add("enter");_h.style.setProperty("--vx",_p[0]+"%");_h.style.setProperty("--vy",_p[1]+"%");sessionStorage.removeItem("cv-enter");setTimeout(function(){_h.classList.remove("enter")},1800)}}catch(x){}</script>
 <style>
 :root{--bg:#f5f4ef;--side:#efeee8;--card:#fff;--line:#e4e2d9;--ink:#1f2a24;--mute:#6b766f;--accent:#2f6b4f;--on:#fff;--h0:#eeede7;--h1:#d6e8dc;--h2:#b4d4c0;--h3:#82b697;--h4:#3f7a5c;--warn:#b3402a;color-scheme:light}
@@ -78,6 +79,21 @@ html.enter aside{animation:sideIn .7s .45s cubic-bezier(.2,.7,.2,1) both}
 @keyframes sideIn{from{opacity:0;transform:translateX(-26px)}}
 @keyframes sideUp{from{opacity:0;transform:translateY(26px)}}
 @media (max-width:760px){html.enter aside{animation-name:sideUp}}
+/* layout by device (set by device.js); a narrow laptop window still uses the width rules above */
+html[data-input=touch] button,html[data-input=touch] input{min-height:44px}
+html[data-device=phone] .app{grid-template-columns:1fr}
+html[data-device=phone] aside{position:fixed;inset:auto 0 0 0;top:auto;height:auto;flex-direction:row;justify-content:space-around;padding:6px;border-right:0;border-top:1px solid var(--line);z-index:5}
+html[data-device=phone] aside button{flex-direction:column;gap:2px;font-size:.75rem;justify-content:center;text-align:center;padding:6px 4px}
+html[data-device=phone] .logo{display:none}html[data-device=phone] #out{margin-top:0}
+html[data-device=phone] main{padding:16px 14px 90px}
+html[data-device=phone] .two,html[data-device=phone] .calwrap{grid-template-columns:1fr}
+html[data-device=phone] .row{grid-template-columns:80px 1fr}html[data-device=phone] .row img{width:80px}html[data-device=phone] .acts{grid-column:1/-1}
+html[data-device=tablet] .app{grid-template-columns:76px 1fr}
+html[data-device=tablet] .logo{justify-content:center;font-size:0;gap:0;padding:0 0 16px}
+html[data-device=tablet] aside button{flex-direction:column;gap:2px;font-size:.72rem;justify-content:center;text-align:center;padding:10px 4px}
+html[data-device=tablet][data-orient=portrait] .two,html[data-device=tablet][data-orient=portrait] .calwrap{grid-template-columns:1fr}
+@media (max-width:760px){html[data-device=tablet] .app{grid-template-columns:1fr}html[data-device=tablet] .two,html[data-device=tablet] .calwrap{grid-template-columns:1fr}html[data-device=tablet] main{padding:16px 14px 90px}}
+#devbtn{font-size:.85rem}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#veil{display:none!important}}
 </style>
 </head>
@@ -94,6 +110,7 @@ html.enter aside{animation:sideIn .7s .45s cubic-bezier(.2,.7,.2,1) both}
       <button class="btn" data-go="checks"><span id="plus"></span>Add check</button>
     </header>
     <div id="view" style="display:contents"></div>
+    <p style="text-align:center"><button class="ghost" id="devbtn" type="button">Layout</button></p>
   </main>
 </div>
 <div id="veil"></div>
@@ -311,6 +328,9 @@ document.addEventListener("change", e => {
 $("#nav").innerHTML = Object.keys(TITLES).map(k => `<button data-go="${k}" data-nav="${k}">${ico(k)}<span>${LABEL[k]}</span></button>`).join("");
 $("#out").innerHTML = ico("out") + "<span>Sign out</span>";
 $("#plus").innerHTML = ico("plus");
+const devLabel = () => { if (window.CV) $("#devbtn").textContent = "Layout: " + CV.label() + " (change)"; };
+$("#devbtn").addEventListener("click", () => window.CV && CV.ask());
+window.addEventListener("cv-device", devLabel); devLabel();
 $("#h1").textContent = TITLES.overview[0]; $("#sub").textContent = TITLES.overview[1];
 load();
 </script>

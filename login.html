@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Sign in - CheckVault</title>
+<script src="/device.js"></script>
 <style>
-:root{--bg:#f5f4ef;--k:1}
+:root{--bg:#f5f4ef;--k:1;--bw:480px;--bh:320px}
 @media (prefers-color-scheme:dark){:root{--bg:#111a16}}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -24,7 +25,16 @@ input:focus-visible,button:focus-visible{outline:3px solid #ffd166;outline-offse
 @keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(6vmax,4vmax) scale(1.18)}}
 
 form{position:fixed;inset:0;display:grid;place-items:center;margin:0}
-.scale{width:480px;height:320px;transform:scale(var(--k))}
+.scale{position:absolute;left:50%;top:50%;width:var(--bw);height:var(--bh);margin:calc(var(--bh) / -2) 0 0 calc(var(--bw) / -2);transform:scale(var(--k))}
+/* phone held upright: a tall vault instead of a wide one */
+html[data-device=phone][data-orient=portrait]{--bw:340px;--bh:470px}
+html[data-device=phone][data-orient=portrait] .door{flex-direction:column;justify-content:center;gap:14px;padding:26px 44px 26px 28px}
+html[data-device=phone][data-orient=portrait] .wheel{order:-1;width:100px;height:100px}
+html[data-device=phone][data-orient=portrait] .panel{flex:none;width:100%}
+html[data-device=phone][data-orient=portrait] .brand,html[data-device=phone][data-orient=portrait] .sub{text-align:center}
+html[data-device=phone][data-orient=portrait] .otpbox{grid-template-columns:1fr;justify-items:center;row-gap:6px;text-align:center}
+html[data-device=phone][data-orient=portrait] .txt{justify-items:center;text-align:center}
+html[data-device=phone][data-orient=portrait] .grp,html[data-device=phone][data-orient=portrait] .who{justify-items:center;justify-content:center}
 .vault{position:relative;width:100%;height:100%;perspective:1400px;animation:enter .95s cubic-bezier(.2,.8,.2,1) both}
 @keyframes enter{from{opacity:0;transform:translateY(28px) scale(.95)}to{opacity:1;transform:none}}
 
@@ -101,8 +111,9 @@ form[data-state=bad] .codes input{border-color:#ff4d4d}
 .wait{display:flex;align-items:center;gap:12px}
 .spin{width:22px;height:22px;border:3px solid rgba(255,255,255,.2);border-top-color:#ff5d8f;border-radius:50%;animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-#err{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 4vh);transform:translateX(-50%);max-width:92vw;margin:0;padding:10px 18px;border-radius:999px;background:rgba(30,6,20,.8);color:#ffc9c9;font-size:.95rem;text-align:center}
+#err{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 44px);transform:translateX(-50%);max-width:92vw;margin:0;padding:10px 18px;border-radius:999px;background:rgba(30,6,20,.8);color:#ffc9c9;font-size:.95rem;text-align:center}
 #err:empty{display:none}
+#devbtn{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 8px);font-size:.8rem;opacity:.75;white-space:nowrap}
 
 #wipe{position:fixed;inset:0;background:var(--bg);z-index:20;pointer-events:none;clip-path:circle(0 at var(--x,50%) var(--y,40%));transition:clip-path .85s cubic-bezier(.65,0,.35,1)}
 #wipe.go{clip-path:circle(150vmax at var(--x,50%) var(--y,40%))}
@@ -159,6 +170,7 @@ form[data-state=bad] .codes input{border-color:#ff4d4d}
   </div>
   <input type="hidden" name="code" id="code">
   <p id="err" role="alert"></p>
+  <button class="link" type="button" id="devbtn">Wrong layout? Change device</button>
 </form>
 <div id="wipe"></div>
 <script>
@@ -169,10 +181,12 @@ let lastW = 0;
 function fit() {
   if (innerWidth === lastW && document.activeElement && document.activeElement.tagName === "INPUT") return;
   lastW = innerWidth;
-  const k = Math.max(.5, Math.min(innerWidth * .94 / 480, innerHeight * .9 / 320, 2));
+  const el = document.querySelector(".scale"), bw = el.offsetWidth, bh = el.offsetHeight;
+  const cap = document.documentElement.getAttribute("data-device") === "phone" ? 1.6 : 2;
+  const k = Math.max(.5, Math.min(innerWidth * .94 / bw, innerHeight * .9 / bh, cap));
   document.documentElement.style.setProperty("--k", k.toFixed(3));
 }
-fit(); addEventListener("resize", fit);
+fit(); addEventListener("resize", fit); addEventListener("cv-device", () => { lastW = 0; fit(); });
 const TEXT = {
   idle: ["Enter your code", "Open your authenticator app and type the 6-digit code. It signs you in as soon as you finish."],
   verifying: ["Verifying code...", "Checking your details."],
@@ -343,6 +357,7 @@ $("cancel").addEventListener("click", () => {
   view("code"); setState("idle");
 });
 
+$("devbtn").addEventListener("click", () => window.CV && CV.ask());
 $("next").addEventListener("click", next);
 $("back").addEventListener("click", closeVault);
 f.addEventListener("submit", e => {

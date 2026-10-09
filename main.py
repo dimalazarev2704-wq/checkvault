@@ -145,7 +145,7 @@ def locked(ip):
 
 def auth(request: Request):
     path = request.url.path
-    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/telegram/webhook"):
+    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/telegram/webhook", "/device.js"):
         return
     try:
         signer.loads(request.cookies.get("session", ""), max_age=SESSION_SECONDS)
@@ -177,6 +177,11 @@ async def security_headers(request, call_next):
     r.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
     return r
+
+
+@app.get("/device.js")
+def device_js():
+    return FileResponse(Path(__file__).parent / "device.js", media_type="text/javascript")
 
 
 @app.get("/login")

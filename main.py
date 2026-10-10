@@ -166,6 +166,10 @@ def ip_of(request):
 ALPHA = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no letters that look like digits
 DEV_KEY = hashlib.sha256(b"device:" + os.environ["ENCRYPTION_KEY"].encode()).digest()
 BANS = "bans.enc"
+LOCKS = "locks.enc"
+MAX_ADD = 30 * 86400  # the most time that can be added at once
+extra = {}         # device id (or "net:<address>") -> when an added lockout ends (epoch seconds)
+pending_time = {}  # Telegram user id -> the timeout they are about to add time to
 banned = {}  # device id -> {"when", "by", "ua", "ip"}: blocked for good until someone unbans it in Telegram
 seen = {}    # device id -> {"ua", "ip", "last"}: what each device looked like when it last opened the login page
 dsigner = URLSafeSerializer(hashlib.sha256(b"device-cookie:" + os.environ["ENCRYPTION_KEY"].encode()).hexdigest(), salt="device")
@@ -191,6 +195,17 @@ def device_name(ua):
     return f"{br} on {os_}"
 
 
+def fmt_dur(s):
+    m = max(1, (max(0, int(s)) + 59) // 60)
+    if m < 60:
+        return f"{m} min"
+    h, mm = divmod(m, 60)
+    if h < 24:
+        return f"{h} h" + (f" {mm} min" if mm else "")
+    d, hh = divmod(h, 24)
+    return f"{d} d" + (f" {hh} h" if hh else "")
+
+
 def read_device(request):
     """The id this browser was given on its first visit, or "" if it has none (or a forged one)."""
     try:
@@ -202,7 +217,7 @@ def read_device(request):
 
 def dev_of(request):
     st = getattr(request, "state", None)
-    return getattr(st, "device", "") or "x:" + ip_of(request)
+    return getattr(st, "device", "") or read_device(request) or "x:" + ip_of(request)
 
 
 def remember_device(dev, ip, ua):
@@ -227,6 +242,8 @@ def lock_info(dev, ip):
             table[k] = [t for t in table[k] if now - t < WINDOW]
             if not table[k]:
                 del table[k]
+    for k in [k for k, v in extra.items() if v <= now]:
+        del extra[k]
 
     def left_for(times, limit):
         t = sorted(times)
@@ -234,9 +251,11 @@ def lock_info(dev, ip):
 
     d, n = left_for(fails.get(dev, []), MAX_FAILS), left_for(net_fails.get(ip, []), NET_MAX)
     g = left_for([t for v in fails.values() for t in v], GLOBAL_MAX)
-    left = max(d, n, g)
-    reason = "" if left <= 0 else "device" if d == left else "network" if n == left else "everyone"
-    return left > 0, int(left), reason
+    options = [("device", d), ("device", extra.get(dev, 0) - now), ("network", n), ("network", extra.get("net:" + ip, 0) - now),
+               ("everyone", g)]
+    left = max(v for _, v in options)
+    reason = next((r for r, v in options if v == left), "") if left > 0 else ""
+    return left > 0, math.ceil(left) if left > 0 else 0, reason
 
 
 def locked(dev, ip):
@@ -245,15 +264,24 @@ def locked(dev, ip):
 
 def lock_text(dev, ip):
     _, left, reason = lock_info(dev, ip)
-    mins = max(1, (left + 59) // 60)
+    wait = fmt_dur(left)
     if reason == "network":
-        return (f"Too many failed attempts from devices on this network. Try again in about {mins} min. "
+        return (f"Too many failed attempts from devices on this network. Try again in about {wait}. "
                 f"Address {ip} \u00b7 Network code {dev_code('net:' + ip)}")
     if reason == "everyone":
-        return (f"Too many failed attempts across all devices. Try again in about {mins} min. "
+        return (f"Too many failed attempts across all devices. Try again in about {wait}. "
                 f"Address {ip} \u00b7 Code {dev_code(dev)}")
-    return (f"This device is locked after too many failed attempts. Try again in about {mins} min. "
+    return (f"This device is locked after too many failed attempts. Try again in about {wait}. "
             f"Address {ip} \u00b7 Device code {dev_code(dev)}")
+
+
+def lock_details(dev, ip):
+    is_locked, left, reason = lock_info(dev, ip)
+    if not is_locked:
+        return {"locked": False}
+    net = reason == "network"
+    return {"locked": True, "seconds": left, "reason": reason, "ip": ip, "label": "Network code" if net else "Device code",
+            "code": dev_code("net:" + ip if net else dev), "message": lock_text(dev, ip)}
 
 
 def locked_error(dev, ip):
@@ -279,9 +307,36 @@ def save_bans():
         return False
 
 
+def save_locks():
+    now = time.time()
+    try:
+        until = {k: v for k, v in extra.items() if v > now}
+        put(LOCKS, fernet.encrypt(json.dumps({"until": until, "seen": {k: seen[k] for k in until if k in seen}}).encode()))
+        return True
+    except HTTPException:
+        return False
+
+
+def load_locks():
+    try:
+        now = time.time()
+        data = json.loads(fernet.decrypt(get(LOCKS)))
+        for k, v in data.get("until", data).items():
+            if isinstance(v, (int, float)) and v > now:
+                extra[k] = v
+        for k, v in (data.get("seen") or {}).items():
+            if k in extra and k not in seen:
+                seen[k] = {"ua": str(v.get("ua", ""))[:300], "ip": str(v.get("ip", "unknown")), "last": 0}
+    except HTTPException as e:
+        if e.status_code != 404:
+            print("LOCKS load failed:", e.detail, flush=True)
+    except Exception as e:
+        print("LOCKS load failed:", type(e).__name__, flush=True)
+
+
 def blocked_page(ip, dev):
     return ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Blocked</title>"
-            "<body style='margin:0;min-height:100vh;display:grid;place-items:center;background:#150a35;color:#fff;"
+            "<body style='margin:0;min-height:100vh;display:grid;place-items:center;background:#000;color:#fff;"
             "font:16px/1.5 system-ui,sans-serif;text-align:center;padding:20px'><div style='max-width:420px'>"
             "<h1 style='margin:0 0 8px'>This device is blocked</h1>"
             f"<p>Address <b>{escape(ip)}</b></p><p style='font-size:1.8rem;letter-spacing:.2em;margin:8px 0'><b>{dev_code(dev)}</b></p>"
@@ -289,10 +344,10 @@ def blocked_page(ip, dev):
 
 
 def find_key(code):
-    for dev in set(banned) | set(fails):
+    for dev in set(banned) | set(fails) | {k for k in extra if not k.startswith("net:")}:
         if dev_code(dev) == code:
             return "dev", dev
-    for ip in net_fails:
+    for ip in set(net_fails) | {k[4:] for k in extra if k.startswith("net:")}:
         if dev_code("net:" + ip) == code:
             return "net", ip
     return None, None
@@ -309,9 +364,10 @@ def tag_for(kind, key):
 
 
 def is_active(kind, key):
+    now = time.time()
     if kind == "net":
-        return len(net_fails.get(key, [])) >= NET_MAX
-    return key in banned or len(fails.get(key, [])) >= MAX_FAILS
+        return len(net_fails.get(key, [])) >= NET_MAX or extra.get("net:" + key, 0) > now
+    return key in banned or len(fails.get(key, [])) >= MAX_FAILS or extra.get(key, 0) > now
 
 
 def entry(kind, key):
@@ -319,8 +375,9 @@ def entry(kind, key):
         code, left = dev_code("net:" + key), lock_info("", key)[1]
         return (f"\U0001F310 Whole network timed out\nCode: {code}\nAddress: {key}\n"
                 f"Failed tries from devices on it: {len(net_fails.get(key, []))}\n"
-                f"Unlocks on its own in about {max(1, (left + 59) // 60)} min",
-                {"inline_keyboard": [[{"text": "\u2705 Unblock network", "callback_data": "u:" + code}]]})
+                f"Unlocks in about {fmt_dur(left)}",
+                {"inline_keyboard": [[{"text": "\u2705 Unblock network", "callback_data": "u:" + code},
+                                      {"text": "\u23f1 Add time", "callback_data": "t:" + code}]]})
     info = seen.get(key) or banned.get(key) or {}
     code, dev, ip = dev_code(key), device_name(info.get("ua")), info.get("ip", "unknown")
     if key in banned:
@@ -329,15 +386,19 @@ def entry(kind, key):
                 {"inline_keyboard": [[{"text": "\u2705 Unban", "callback_data": "u:" + code}]]})
     left = lock_info(key, ip)[1]
     return (f"\U0001F512 Device timed out\nCode: {code}\nAddress: {ip}\nDevice: {dev}\nFailed tries: {len(fails.get(key, []))}\n"
-            f"Unlocks on its own in about {max(1, (left + 59) // 60)} min",
+            f"Unlocks in about {fmt_dur(left)}",
             {"inline_keyboard": [[{"text": "\U0001F6AB Ban forever", "callback_data": "b:" + code},
-                                  {"text": "\u2705 Unblock", "callback_data": "u:" + code}]]})
+                                  {"text": "\u2705 Unblock", "callback_data": "u:" + code}],
+                                 [{"text": "\u23f1 Add time", "callback_data": "t:" + code}]]})
 
 
 def send_timeouts(chat):
     lock_info("", "")  # tidy out old entries first
-    devs = [d for d, ts in fails.items() if len(ts) >= MAX_FAILS and d not in banned]
-    nets = [ip for ip, ts in net_fails.items() if len(ts) >= NET_MAX]
+    now = time.time()
+    devs = sorted(d for d in ({d for d, ts in fails.items() if len(ts) >= MAX_FAILS} |
+                              {k for k, v in extra.items() if v > now and not k.startswith("net:")}) if d not in banned)
+    nets = sorted({ip for ip, ts in net_fails.items() if len(ts) >= NET_MAX} |
+                  {k[4:] for k, v in extra.items() if v > now and k.startswith("net:")})
     everyone = sum(len(v) for v in fails.values()) >= GLOBAL_MAX
     if not (devs or nets or banned or everyone):
         tg_call("sendMessage", {"chat_id": chat, "text": "No devices are timed out or banned right now. \u2705"})
@@ -355,11 +416,75 @@ def send_timeouts(chat):
         tg_call("sendMessage", {"chat_id": chat, "text": f"...and {len(items) - 12} more."})
 
 
+def parse_duration(text):
+    """'30', '30m', '2h', '1d', '1h30m', '1.5 hours', '90s' -> seconds (a bare number means minutes); None if unclear."""
+    t = text.strip().lower()[:40]
+    if re.sub(r"\d+(?:\.\d+)?\s*[a-z]*", "", t).strip():
+        return None  # something left over that is not a number with a unit
+    units = {"s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1, "": 60, "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
+             "h": 3600, "hr": 3600, "hrs": 3600, "hour": 3600, "hours": 3600, "d": 86400, "day": 86400, "days": 86400}
+    total = 0.0
+    for num, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]*)", t):
+        if unit not in units:
+            return None
+        total += float(num) * units[unit]
+    return int(total) if total > 0 else None
+
+
+def add_time(kind, key, secs):
+    """Push a timeout's end further away by secs. Returns the seconds left afterwards."""
+    now = time.time()
+    ip = key if kind == "net" else (seen.get(key) or {}).get("ip", "")
+    left = lock_info("" if kind == "net" else key, ip)[1]
+    extra["net:" + key if kind == "net" else key] = now + left + secs
+    save_locks()
+    return left + secs
+
+
+def notify_others(uid, text):
+    for c in TG_USERS.values():
+        if c != str(uid):
+            tg_call("sendMessage", {"chat_id": c, "text": text})
+
+
+def answer_time(uid, chat, p, text):
+    def say(t):
+        tg_call("sendMessage", {"chat_id": chat, "text": t})
+
+    if text.lower() in ("cancel", "stop", "no"):
+        pending_time.pop(uid, None)
+        return say("Cancelled. Nothing was changed.")
+    secs = parse_duration(text)
+    if secs is None:
+        return say("I did not understand that. Type it like 30m, 2h or 1d (a plain number means minutes), or type cancel.")
+    if secs < 60:
+        return say("The least I can add is 1 minute. Type a longer time, or cancel.")
+    if secs > MAX_ADD:
+        return say("That is more than 30 days. Type a shorter time, or use Ban forever for a permanent block.")
+    pending_time.pop(uid, None)
+    kind, key = p["kind"], p["key"]
+    if not is_active(kind, key):
+        return say("That one is already clear, so there was nothing to extend.")
+    left = add_time(kind, key, secs)
+    tag = tag_for(kind, key)
+    say(f"\u23f1 Added {fmt_dur(secs)}.\n{tag}\nIt now unlocks in about {fmt_dur(left)}.")
+    notify_others(uid, f"{actor(uid)} added {fmt_dur(secs)} to a timeout.\n{tag}\nIt now unlocks in about {fmt_dur(left)}.")
+
+
 def handle_message(m):
     uid, chat = str((m.get("from") or {}).get("id", "")), (m.get("chat") or {}).get("id")
     if uid not in TG_USERS.values() or not chat or (m.get("chat") or {}).get("type", "private") != "private":
         return  # strangers get no reply at all, and nothing is ever answered inside a group chat
-    cmd = str(m.get("text", "")).split(" ")[0].split("@")[0].lower()
+    text = str(m.get("text", "")).strip()
+    p = pending_time.get(uid)
+    if p and time.time() > p["exp"]:
+        pending_time.pop(uid, None)
+        p = None
+    if p and text and not text.startswith("/"):
+        return answer_time(uid, chat, p, text)
+    cmd = text.split(" ")[0].split("@")[0].lower()
+    if cmd.startswith("/"):
+        pending_time.pop(uid, None)  # any command cancels a half-finished "add time"
     if cmd in ("/timeouts", "/timeout", "/timeoutd", "/blocked"):
         send_timeouts(chat)
     elif cmd in ("/start", "/help"):
@@ -381,9 +506,7 @@ def admin_callback(cb):
                                         "reply_markup": kb or {"inline_keyboard": []}})
 
     def tell_others(text):
-        for c in TG_USERS.values():
-            if c != uid:
-                tg_call("sendMessage", {"chat_id": c, "text": text})
+        notify_others(uid, text)
 
     if uid not in TG_USERS.values():
         return toast("Not allowed", True)
@@ -391,6 +514,8 @@ def admin_callback(cb):
     if act == "c":
         fails.clear()
         net_fails.clear()
+        extra.clear()
+        save_locks()
         toast("All lockouts cleared")
         say(f"All lockouts cleared by {who} at {stamp()}.")
         return tell_others(f"{who} cleared all CheckVault lockouts at {stamp()}.")
@@ -402,6 +527,15 @@ def admin_callback(cb):
     if act == "x":
         toast("Cancelled")
         return say(*entry(kind, key)) if is_active(kind, key) else say("Already clear.")
+    if act == "t":
+        if not is_active(kind, key) or key in banned:
+            toast("Nothing to extend.", True)
+            return say("That one is not timed out any more.")
+        pending_time[uid] = {"kind": kind, "key": key, "exp": time.time() + 300}
+        toast("Type how much time to add")
+        return tg_call("sendMessage", {"chat_id": chat or uid, "text": f"How much time should I add?\n{tag}\n\nType it like 30m, 2h or 1d "
+                                       "(a plain number means minutes). Type cancel to stop.",
+                                       "reply_markup": {"force_reply": True, "input_field_placeholder": "e.g. 30m, 2h, 1d"}})
     if act in ("b", "B") and kind == "net":
         return toast("A whole network can only be unblocked, not banned.", True)
     if act == "b":
@@ -414,6 +548,8 @@ def admin_callback(cb):
         info = seen.get(key) or {}
         banned[key] = {"when": stamp(), "by": who, "ua": info.get("ua", ""), "ip": info.get("ip", "unknown")}
         fails.pop(key, None)
+        if extra.pop(key, None) is not None:
+            save_locks()
         saved = save_bans()
         toast("Banned")
         say(f"\u26d4 Device banned forever by {who} at {stamp()}.\n{tag}" +
@@ -423,10 +559,14 @@ def admin_callback(cb):
         note = ""
         if kind == "net":
             net_fails.pop(key, None)
+            extra.pop("net:" + key, None)
         else:
             if banned.pop(key, None) is not None:
                 save_bans()
             fails.pop(key, None)
+            extra.pop(key, None)
+        save_locks()
+        if kind == "dev":
             _, _, why = lock_info(key, (seen.get(key) or {}).get("ip", ""))
             if why == "network":
                 note = "\nIts whole network is still timed out. Use /timeouts and unblock the network too."
@@ -480,6 +620,8 @@ async def security_headers(request, call_next):
     r.headers["Referrer-Policy"] = "no-referrer"
     r.headers["Content-Security-Policy"] = (
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+    if path.startswith(("/login", "/api")) and "Cache-Control" not in r.headers:
+        r.headers["Cache-Control"] = "no-store"
     if fresh and path != "/telegram/webhook":
         r.set_cookie("cvd", dsigner.dumps(dev), max_age=DEVICE_COOKIE_SECONDS, httponly=True, secure=COOKIE_SECURE, samesite="lax")
     return r
@@ -521,10 +663,7 @@ def start_session(extra=None):
 
 @app.get("/login/lock")
 def lock_status(request: Request):
-    ip, dev = ip_of(request), dev_of(request)
-    if not locked(dev, ip):
-        return {"locked": False}
-    return {"locked": True, "message": lock_text(dev, ip)}
+    return lock_details(dev_of(request), ip_of(request))
 
 
 @app.get("/login/people")
@@ -593,7 +732,7 @@ def telegram_webhook(request: Request, update: dict = Body(...)):
     cb = update.get("callback_query")
     if not cb:
         return {"ok": True}
-    if str(cb.get("data", ""))[:2] in ("b:", "B:", "x:", "u:", "c:"):
+    if str(cb.get("data", ""))[:2] in ("b:", "B:", "x:", "u:", "c:", "t:"):
         admin_callback(cb)
         return {"ok": True}
     act, _, rid = str(cb.get("data", "")).partition(":")
@@ -646,9 +785,14 @@ def _set_webhook():
     tg_call("setMyCommands", {"commands": [{"command": "timeouts", "description": "Show blocked devices"}]})
 
 
+def _load_saved_state():
+    load_bans()
+    load_locks()
+
+
 @app.on_event("startup")
 def bans_startup():
-    threading.Thread(target=load_bans, daemon=True).start()
+    threading.Thread(target=_load_saved_state, daemon=True).start()
 
 
 @app.on_event("startup")

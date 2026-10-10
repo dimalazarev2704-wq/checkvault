@@ -75,13 +75,15 @@ Only people on that list can approve, and only their own message. Tapping **It's
 
 ## Blocked devices in Telegram
 
-Send `/timeouts` to the bot (only the people on `TELEGRAM_USERS` get an answer). It lists every device that is locked out for 15 minutes and every device banned for good. Each one shows a **code**, its address, and what kind of device it was (for example "Chrome on Windows").
+Send `/timeouts` to the bot (only the people on `TELEGRAM_USERS` get an answer). It lists every **device** that is timed out for 15 minutes, every **whole network** that is timed out, and every device banned for good. Each entry shows a **code**, an address, and for devices what kind of device it was (for example "Safari on iPhone").
 
-- **Unblock** lifts a timeout right away. **Ban forever** asks you to confirm, then blocks that address from the whole site until someone presses **Unban**. Bans are saved (encrypted) in your Backblaze bucket, so they survive restarts.
+- **Each browser is its own device.** The first time a browser opens the site it is given a private random id (a cookie), so two phones on the same Wi-Fi are told apart and get different codes. One device's wrong tries only time out that device.
+- **A device is timed out after 5 wrong tries** in 15 minutes. **Unblock** lifts it at once. **Ban forever** asks you to confirm, then blocks that one device from the whole site until someone presses **Unban**. Bans are saved (encrypted) in your Backblaze bucket, so they survive restarts.
+- **A whole network is timed out after 20 wrong tries** from all devices on it combined, so someone who keeps throwing their cookie away can't dodge the limit. A network can be unblocked but not banned.
 - **Clear all lockouts** appears if too many failures from all devices together have locked everyone out.
-- The blocked device's own screen shows the same **address and code**, so you can match it with the bot's list. The code is the same for the same address and can't be faked.
+- The blocked device's own screen shows the **address and code**, and the bot's list shows the same code, so you can match them. The code is made with your site's secret, so it can't be faked.
 - Everyone else on the list is told when someone bans, unbans or clears.
 
-An address is a network, not a single gadget: devices on the same Wi-Fi share one, and a phone on mobile data can change address. Banning stops that address, not a person.
+Honest limits: the id lives in the browser, so clearing cookies, a private window, or another browser counts as a new device. A banned device that does this is not banned any more, but it has to start over at 5 wrong tries and still counts toward its network's 20.
 
-**How the address is worked out:** Render does not clean the `X-Forwarded-For` header, so anyone can write a fake one there. The site uses the Cloudflare headers instead (`cf-connecting-ip`, then `true-client-ip`), which visitors can't fake. After a deploy, the Render Logs show one line, `Visitor address comes from: cf-connecting-ip`. If it says `connection` instead, tell the owner of the site, because then addresses can be faked. An IPv6 visitor counts as their whole /64 network, and the bot shows it like `2606:4700:abcd:12::/64`.
+**How the address is worked out:** Render does not clean the `X-Forwarded-For` header, so anyone can write a fake one there. The site uses the Cloudflare headers instead (`cf-connecting-ip`, then `true-client-ip`), which visitors can't fake. After a deploy, the Render Logs show one line, `Visitor address comes from: cf-connecting-ip`. If it says `connection` instead, addresses can be faked, so tell the site's builder. An IPv6 visitor counts as their whole /64 network, shown like `2606:4700:abcd:12::/64`.

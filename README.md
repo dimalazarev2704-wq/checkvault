@@ -71,3 +71,17 @@ On the six-digit step there is a **Use Telegram instead** button. You pick who t
 5. Redeploy. The site connects the bot to itself on startup (Render supplies the site address automatically; if you use another host, set `PUBLIC_URL` to your site's https address).
 
 Only people on that list can approve, and only their own message. Tapping **It's not me** blocks that visitor's address for 15 minutes and warns the others in Telegram. The normal six-digit code from your authenticator app keeps working, and needs `TOTP_SECRET` to stay set in Render.
+
+
+## Blocked devices in Telegram
+
+Send `/timeouts` to the bot (only the people on `TELEGRAM_USERS` get an answer). It lists every device that is locked out for 15 minutes and every device banned for good. Each one shows a **code**, its address, and what kind of device it was (for example "Chrome on Windows").
+
+- **Unblock** lifts a timeout right away. **Ban forever** asks you to confirm, then blocks that address from the whole site until someone presses **Unban**. Bans are saved (encrypted) in your Backblaze bucket, so they survive restarts.
+- **Clear all lockouts** appears if too many failures from all devices together have locked everyone out.
+- The blocked device's own screen shows the same **address and code**, so you can match it with the bot's list. The code is the same for the same address and can't be faked.
+- Everyone else on the list is told when someone bans, unbans or clears.
+
+An address is a network, not a single gadget: devices on the same Wi-Fi share one, and a phone on mobile data can change address. Banning stops that address, not a person.
+
+**How the address is worked out:** Render does not clean the `X-Forwarded-For` header, so anyone can write a fake one there. The site uses the Cloudflare headers instead (`cf-connecting-ip`, then `true-client-ip`), which visitors can't fake. After a deploy, the Render Logs show one line, `Visitor address comes from: cf-connecting-ip`. If it says `connection` instead, tell the owner of the site, because then addresses can be faked. An IPv6 visitor counts as their whole /64 network, and the bot shows it like `2606:4700:abcd:12::/64`.

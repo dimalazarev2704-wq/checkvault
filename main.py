@@ -1,12 +1,13 @@
-import hashlib, hmac, io, json, math, os, secrets, threading, time, urllib.parse, urllib.request, uuid
+import hashlib, hmac, io, ipaddress, json, math, os, secrets, threading, time, urllib.parse, urllib.request, uuid
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 import pyotp
 from PIL import Image, ImageOps
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 USER = os.environ.get("APP_USER", "me")
@@ -130,22 +131,251 @@ fails, last_code = {}, [""]  # failure times per visitor address; last accepted 
 GLOBAL_MAX = 25  # failures from everyone combined, stops guessing from many addresses
 
 
+_ip_logged = set()
+
+
 def ip_of(request):
-    return request.client.host if request.client else "unknown"
+    """The visitor's address, as hard to fake as possible.
+    Render does not clean X-Forwarded-For, so a visitor can write anything there. The Cloudflare headers are set by the
+    edge and cannot be forged, so they come first. An IPv6 visitor counts as their whole /64 network, because one
+    household or attacker controls billions of addresses inside it."""
+    raw, src = "", "connection"
+    for h in ("cf-connecting-ip", "true-client-ip"):
+        v = request.headers.get(h, "").split(",")[0].strip()
+        if v:
+            raw, src = v, h
+            break
+    if not raw:
+        raw = request.client.host if request.client else ""
+    if src not in _ip_logged:
+        _ip_logged.add(src)
+        print("Visitor address comes from:", src, flush=True)
+    try:
+        a = ipaddress.ip_address(raw)
+    except ValueError:
+        return "unknown"
+    if a.version == 6:
+        if a.ipv4_mapped:
+            return str(a.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{a}/64", strict=False))
+    return str(a)
 
 
-def locked(ip):
+ALPHA = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no letters that look like digits
+DEV_KEY = hashlib.sha256(b"device:" + os.environ["ENCRYPTION_KEY"].encode()).digest()
+BANS = "bans.enc"
+banned = {}  # address -> {"when", "by", "ua"}: blocked for good until someone unbans it in Telegram
+seen = {}    # address -> {"ua", "last"}: what kind of device last opened the login page
+
+
+def dev_code(ip):
+    """A short code that is the same for the same address everywhere (blocked screen and Telegram) and can't be forged."""
+    n = int.from_bytes(hmac.new(DEV_KEY, ip.encode(), "sha256").digest()[:8], "big")
+    out = ""
+    for _ in range(6):
+        n, r = divmod(n, len(ALPHA))
+        out += ALPHA[r]
+    return out
+
+
+def device_name(ua):
+    ua = ua or ""
+    os_ = ("iPhone" if "iPhone" in ua else "iPad" if "iPad" in ua else "Android" if "Android" in ua else
+           "Windows" if "Windows" in ua else "Mac" if "Macintosh" in ua else "Linux" if "Linux" in ua else "unknown device")
+    br = ("Edge" if "Edg/" in ua else "Firefox" if "Firefox" in ua else "Chrome" if ("Chrome" in ua or "CriOS" in ua)
+          else "Safari" if "Safari" in ua else "a browser")
+    return f"{br} on {os_}"
+
+
+def remember_device(ip, ua):
+    seen[ip] = {"ua": ua[:300], "last": time.time()}
+    if len(seen) > 500:
+        for k in sorted(seen, key=lambda k: seen[k]["last"])[:100]:
+            del seen[k]
+
+
+def lock_info(ip):
+    """(is_locked, seconds_left) for this visitor, counting the per-address limit and the everyone-combined limit."""
     now = time.time()
     for k in list(fails):
         fails[k] = [t for t in fails[k] if now - t < WINDOW]
         if not fails[k]:
             del fails[k]
-    return len(fails.get(ip, [])) >= MAX_FAILS or sum(len(v) for v in fails.values()) >= GLOBAL_MAX
+    left = 0
+    mine = sorted(fails.get(ip, []))
+    if len(mine) >= MAX_FAILS:
+        left = max(left, mine[len(mine) - MAX_FAILS] + WINDOW - now)
+    everyone = sorted(t for v in fails.values() for t in v)
+    if len(everyone) >= GLOBAL_MAX:
+        left = max(left, everyone[len(everyone) - GLOBAL_MAX] + WINDOW - now)
+    return left > 0, int(left)
+
+
+def locked(ip):
+    return lock_info(ip)[0]
+
+
+def locked_error(ip):
+    _, left = lock_info(ip)
+    return HTTPException(429, f"Too many failed attempts. Try again in about {max(1, (left + 59) // 60)} min. "
+                              f"Address {ip} \u00b7 Code {dev_code(ip)}")
+
+
+def load_bans():
+    try:
+        for r in json.loads(fernet.decrypt(get(BANS))):
+            banned[r["ip"]] = {k: r.get(k, "") for k in ("when", "by", "ua")}
+    except HTTPException as e:
+        if e.status_code != 404:
+            print("BANS load failed:", e.detail, flush=True)
+    except Exception as e:
+        print("BANS load failed:", type(e).__name__, flush=True)
+
+
+def save_bans():
+    try:
+        put(BANS, fernet.encrypt(json.dumps([{"ip": ip, **v} for ip, v in banned.items()]).encode()))
+        return True
+    except HTTPException:
+        return False
+
+
+def blocked_page(ip):
+    return ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'><title>Blocked</title>"
+            "<body style='margin:0;min-height:100vh;display:grid;place-items:center;background:#150a35;color:#fff;"
+            "font:16px/1.5 system-ui,sans-serif;text-align:center;padding:20px'><div style='max-width:420px'>"
+            "<h1 style='margin:0 0 8px'>This device is blocked</h1>"
+            f"<p>Address <b>{escape(ip)}</b></p><p style='font-size:1.8rem;letter-spacing:.2em;margin:8px 0'><b>{dev_code(ip)}</b></p>"
+            "<p style='color:#cfc8ee'>If this is your device, tell the owner this code. They can unblock it from Telegram.</p></div>")
+
+
+def is_internal(ip):
+    try:
+        a = ipaddress.ip_address(ip.split("/")[0])
+        return a.is_private or a.is_loopback or a.is_link_local
+    except ValueError:
+        return True  # "unknown" and anything odd: never ban it
+
+
+def find_ip(code):
+    for ip in set(banned) | set(fails):
+        if dev_code(ip) == code:
+            return ip
+    return None
+
+
+def actor(uid):
+    return next((n.title() for n, i in TG_USERS.items() if i == str(uid)), "Someone")
+
+
+def entry(ip):
+    code, dev = dev_code(ip), device_name((seen.get(ip) or banned.get(ip) or {}).get("ua"))
+    if ip in banned:
+        b = banned[ip]
+        return (f"\u26d4 Banned forever\nCode: {code}\nAddress: {ip}\nDevice: {dev}\nBanned by {b['by']} on {b['when']}",
+                {"inline_keyboard": [[{"text": "\u2705 Unban", "callback_data": "u:" + code}]]})
+    _, left = lock_info(ip)
+    return (f"\U0001F512 Timed out\nCode: {code}\nAddress: {ip}\nDevice: {dev}\nFailed tries: {len(fails.get(ip, []))}\n"
+            f"Unlocks on its own in about {max(1, (left + 59) // 60)} min",
+            {"inline_keyboard": [[{"text": "\U0001F6AB Ban forever", "callback_data": "b:" + code},
+                                  {"text": "\u2705 Unblock", "callback_data": "u:" + code}]]})
+
+
+def send_timeouts(chat):
+    lock_info("")  # tidy out old entries first
+    timed = [ip for ip, ts in fails.items() if len(ts) >= MAX_FAILS and ip not in banned]
+    everyone = sum(len(v) for v in fails.values()) >= GLOBAL_MAX
+    if not (timed or banned or everyone):
+        tg_call("sendMessage", {"chat_id": chat, "text": "No devices are timed out or banned right now. \u2705"})
+        return
+    head = {"chat_id": chat, "text": f"Blocked devices: {len(timed)} timed out, {len(banned)} banned."}
+    if everyone:
+        head["text"] += "\n\nEveryone is locked out right now, because of too many failed attempts from all devices combined."
+        head["reply_markup"] = {"inline_keyboard": [[{"text": "Clear all lockouts", "callback_data": "c:all"}]]}
+    tg_call("sendMessage", head)
+    for ip in (timed + list(banned))[:12]:
+        text, markup = entry(ip)
+        tg_call("sendMessage", {"chat_id": chat, "text": text, "reply_markup": markup})
+    if len(timed) + len(banned) > 12:
+        tg_call("sendMessage", {"chat_id": chat, "text": f"...and {len(timed) + len(banned) - 12} more."})
+
+
+def handle_message(m):
+    uid, chat = str((m.get("from") or {}).get("id", "")), (m.get("chat") or {}).get("id")
+    if uid not in TG_USERS.values() or not chat or (m.get("chat") or {}).get("type", "private") != "private":
+        return  # strangers get no reply at all, and nothing is ever answered inside a group chat
+    cmd = str(m.get("text", "")).split(" ")[0].split("@")[0].lower()
+    if cmd in ("/timeouts", "/timeout", "/timeoutd", "/blocked"):
+        send_timeouts(chat)
+    elif cmd in ("/start", "/help"):
+        tg_call("sendMessage", {"chat_id": chat, "text": "You are on the CheckVault list.\n\n/timeouts shows blocked devices, "
+                                "and lets you unblock them or ban them forever."})
+
+
+def admin_callback(cb):
+    uid, msg = str((cb.get("from") or {}).get("id", "")), cb.get("message") or {}
+    act, _, code = str(cb["data"]).partition(":")
+    chat, mid = (msg.get("chat") or {}).get("id"), msg.get("message_id")
+
+    def toast(t, alert=False):
+        tg_call("answerCallbackQuery", {"callback_query_id": cb["id"], "text": t, "show_alert": alert})
+
+    def say(text, kb=None):  # rewrite the message the button was on
+        if chat and mid:
+            tg_call("editMessageText", {"chat_id": chat, "message_id": mid, "text": text,
+                                        "reply_markup": kb or {"inline_keyboard": []}})
+
+    def tell_others(text):
+        for c in TG_USERS.values():
+            if c != uid:
+                tg_call("sendMessage", {"chat_id": c, "text": text})
+
+    if uid not in TG_USERS.values():
+        return toast("Not allowed", True)
+    who = actor(uid)
+    if act == "c":
+        fails.clear()
+        toast("All lockouts cleared")
+        say(f"All lockouts cleared by {who} at {stamp()}.")
+        return tell_others(f"{who} cleared all CheckVault lockouts at {stamp()}.")
+    ip = find_ip(code)
+    if not ip:
+        toast("That one is already clear.")
+        return say("Already clear.")
+    tag = f"Code: {dev_code(ip)}\nAddress: {ip}"
+    if act == "x":
+        toast("Cancelled")
+        return say(*entry(ip)) if (ip in banned or locked(ip)) else say("Already clear.")
+    if act in ("b", "B") and is_internal(ip):
+        toast("Not allowed", True)
+        return say(f"That address is internal to the host, so banning it would lock everyone out.\n{tag}")
+    if act == "b":
+        toast("Are you sure?")
+        return say(f"Ban forever?\n{tag}\nThis blocks the whole site for that address until someone unbans it.",
+                   {"inline_keyboard": [[{"text": "Yes, ban forever", "callback_data": "B:" + code},
+                                         {"text": "Cancel", "callback_data": "x:" + code}]]})
+    if act == "B":
+        banned[ip] = {"when": stamp(), "by": who, "ua": (seen.get(ip) or {}).get("ua", "")}
+        fails.pop(ip, None)
+        saved = save_bans()
+        toast("Banned")
+        say(f"\u26d4 Banned forever by {who} at {stamp()}.\n{tag}" +
+            ("" if saved else "\nNote: it could not be saved, so it is lost if the site restarts."))
+        return tell_others(f"{who} banned a device forever.\n{tag}\nTime: {stamp()}")
+    if act == "u":
+        was_banned = banned.pop(ip, None) is not None
+        fails.pop(ip, None)
+        if was_banned:
+            save_bans()
+        toast("Unblocked")
+        say(f"\u2705 Unblocked by {who} at {stamp()}.\n{tag}" +
+            ("\nEveryone is still locked by the combined limit. Use /timeouts, then Clear all lockouts." if locked(ip) else ""))
+        return tell_others(f"{who} unblocked a device.\n{tag}\nTime: {stamp()}")
 
 
 def auth(request: Request):
     path = request.url.path
-    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/telegram/webhook", "/device.js"):
+    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/login/lock", "/telegram/webhook", "/device.js"):
         return
     try:
         signer.loads(request.cookies.get("session", ""), max_age=SESSION_SECONDS)
@@ -167,6 +397,11 @@ async def unexpected_error(request, exc):
 
 @app.middleware("http")
 async def security_headers(request, call_next):
+    ip, path = ip_of(request), request.url.path
+    if path.startswith("/login"):
+        remember_device(ip, request.headers.get("user-agent", ""))
+    if ip in banned and path != "/telegram/webhook":
+        return HTMLResponse(blocked_page(ip), status_code=403)
     size = request.headers.get("content-length", "")
     if size.isdigit() and int(size) > 25 * 1024 * 1024:
         return JSONResponse({"detail": "Upload too large"}, status_code=413)
@@ -193,7 +428,7 @@ def login_page():
 def login(request: Request, username: str = Form(""), password: str = Form(""), code: str = Form("")):
     ip = ip_of(request)
     if locked(ip):
-        raise HTTPException(429, "Too many failed attempts. Try again in 15 minutes.")
+        raise locked_error(ip)
     code = code.replace(" ", "")
     user_ok = valid_user(username)
     pass_ok = secrets.compare_digest(password.encode(), PASSWORD.encode())
@@ -213,6 +448,16 @@ def start_session(extra=None):
     return resp
 
 
+@app.get("/login/lock")
+def lock_status(request: Request):
+    ip = ip_of(request)
+    is_locked, left = lock_info(ip)
+    if not is_locked:
+        return {"locked": False}
+    return {"locked": True, "message": f"Locked for about {max(1, (left + 59) // 60)} more min. "
+                                       f"Address {ip} \u00b7 Code {dev_code(ip)}"}
+
+
 @app.get("/login/people")
 def people():
     return {"people": list(TG_USERS) if TG_TOKEN else []}
@@ -222,7 +467,7 @@ def people():
 def ask(request: Request, username: str = Form(""), password: str = Form(""), who: str = Form("")):
     ip = ip_of(request)
     if locked(ip):
-        raise HTTPException(429, "Too many failed attempts. Try again in 15 minutes.")
+        raise locked_error(ip)
     if not TG_TOKEN:
         raise HTTPException(400, "Telegram sign-in is not set up.")
     who, now = who.strip().lower(), time.time()
@@ -273,8 +518,14 @@ def status(poll: str = Form(""), cancel: str = Form("")):
 def telegram_webhook(request: Request, update: dict = Body(...)):
     if not TG_TOKEN or not hmac.compare_digest(request.headers.get("x-telegram-bot-api-secret-token", ""), TG_SECRET):
         raise HTTPException(403, "Forbidden")
+    if update.get("message"):
+        handle_message(update["message"])
+        return {"ok": True}
     cb = update.get("callback_query")
     if not cb:
+        return {"ok": True}
+    if str(cb.get("data", ""))[:2] in ("b:", "B:", "x:", "u:", "c:"):
+        admin_callback(cb)
         return {"ok": True}
     act, _, rid = str(cb.get("data", "")).partition(":")
     r, uid, msg = reqs.get(rid), str((cb.get("from") or {}).get("id", "")), cb.get("message") or {}
@@ -322,7 +573,13 @@ def storage_check():
 
 def _set_webhook():
     tg_call("setWebhook", {"url": f"{PUBLIC_URL}/telegram/webhook", "secret_token": TG_SECRET,
-                           "allowed_updates": ["callback_query"], "drop_pending_updates": True})
+                           "allowed_updates": ["callback_query", "message"], "drop_pending_updates": True})
+    tg_call("setMyCommands", {"commands": [{"command": "timeouts", "description": "Show blocked devices"}]})
+
+
+@app.on_event("startup")
+def bans_startup():
+    threading.Thread(target=load_bans, daemon=True).start()
 
 
 @app.on_event("startup")

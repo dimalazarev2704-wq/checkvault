@@ -839,7 +839,7 @@ def save_index(recs):
 def open_image(blob):
     try:
         img = Image.open(io.BytesIO(blob))
-        img.draft("RGB", (1600, 1600))  # JPEGs decode at reduced size, saving memory
+        img.draft("RGB", (2400, 2400))  # JPEGs decode at reduced size, saving memory
         return ImageOps.exif_transpose(img).convert("RGB")
     except Exception:
         raise HTTPException(400, "That file is not a valid image")
@@ -867,7 +867,7 @@ def add_check(
         raise HTTPException(400, "Date must look like 2026-09-29")
     payee, check_number, memo = payee.strip()[:100], check_number.strip()[:30], memo.strip()[:200]
     if not payee:
-        raise HTTPException(400, "Payee is required")
+        raise HTTPException(400, "Store name is required")
     cid = str(uuid.uuid4())
     parts = {}
     for side, f in (("front", front), ("back", back)):
@@ -877,9 +877,9 @@ def add_check(
         if len(blob) > MAX_BYTES:
             raise HTTPException(413, "Image over 10 MB")
         img = open_image(blob)
-        parts[side] = jpeg(img, 1600, 80)
+        parts[side] = jpeg(img, 2400, 80)  # tall enough that a long receipt stays readable
         if side == "front":
-            parts["thumb"] = jpeg(img, 240, 70)
+            parts["thumb"] = jpeg(img, 480, 70)
     for name, data in parts.items():
         put(f"images/{cid}-{name}.enc", fernet.encrypt(data))
     rec = dict(id=cid, date=date, payee=payee.strip(), amount=round(amount, 2),

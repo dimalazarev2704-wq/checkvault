@@ -70,6 +70,7 @@ html[data-device=phone][data-orient=portrait] .grp,html[data-device=phone][data-
 .unlock{width:100%;padding:12px;font-size:16px;font-weight:800;color:#3a1200;border:0;border-radius:14px;cursor:pointer;
   background:linear-gradient(135deg,#ffd166,#ff8a4c);box-shadow:0 6px 0 #b4501f,0 12px 24px rgba(0,0,0,.3);transition:transform .15s,box-shadow .15s}
 .unlock:active{transform:translateY(4px);box-shadow:0 2px 0 #b4501f}
+.unlock:disabled{opacity:.55;cursor:not-allowed}
 .lb{position:absolute;right:-8px;width:30px;height:12px;border-radius:6px;background:linear-gradient(#ffe9a8,#c58a2a);box-shadow:0 1px 3px rgba(0,0,0,.5);transition:transform .4s .7s}
 .l1{top:24%}.l2{top:50%;margin-top:-6px}.l3{top:76%}
 .vault.open .lb{transform:translateX(-26px);transition-delay:.55s}
@@ -210,7 +211,7 @@ function updateDots() { const n = digits.filter(d => d.value).length; dots.forEa
 const isOpen = () => vault.classList.contains("open");
 
 async function next() {
-  if (busy || isOpen()) return;
+  if (busy || isOpen() || $("next").disabled) return;
   if (!f.elements.username.value || !f.elements.password.value) { err.textContent = "Enter your username and password first."; return; }
   busy = true; err.textContent = "";
   f.elements.username.readOnly = f.elements.password.readOnly = true;
@@ -365,6 +366,19 @@ f.addEventListener("submit", e => {
   if (!isOpen()) next();
   else if (digits.every(d => d.value)) send();
 });
+let lockTimer = 0;
+async function checkLock() {
+  try {
+    const j = await (await fetch("/login/lock")).json(), b = $("next");
+    if (j.locked) {
+      err.textContent = j.message; b.disabled = true; b.textContent = "Locked";
+      if (!lockTimer) lockTimer = setInterval(checkLock, 20000);
+    } else if (b.disabled) {
+      err.textContent = ""; b.disabled = false; b.textContent = "Unlock"; clearInterval(lockTimer); lockTimer = 0;
+    }
+  } catch (e) {}
+}
+checkLock();
 window.addEventListener("error", e => { err.textContent = "Page error: " + e.message; });
 f.elements.username.focus();
 </script>

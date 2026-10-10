@@ -1,12 +1,12 @@
 # CheckVault
 
-Photograph checks, save them encrypted to your own Backblaze B2 bucket (free 10 GB, no credit card), search them later.
+Photograph store receipts, save them encrypted to your own Backblaze B2 bucket (free 10 GB, no credit card), search them later.
 
 ## What it does
-- Camera capture (front and back) from your phone browser, or upload existing scans
+- Camera capture of a receipt (plus an optional second photo for a long one) from your phone browser, or upload existing photos
 - Images and records are encrypted with your key **before** upload, then S3 encrypts them again at rest
 - Nothing is public: images only load through the logged-in app
-- Search by payee, amount, check number, or memo
+- Search by store, total, receipt number, or notes
 
 ## Setup
 ```bash
@@ -16,7 +16,7 @@ pip install -r requirements.txt
 python setup_2fa.py
 export TOTP_SECRET="<secret it printed>"
 
-# generate an encryption key ONCE and back it up somewhere safe (lose it = lose your checks)
+# generate an encryption key ONCE and back it up somewhere safe (lose it = lose your receipts)
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
 export ENCRYPTION_KEY="<key from above>"

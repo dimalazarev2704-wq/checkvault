@@ -40,7 +40,7 @@ button:disabled{opacity:.6}
 .bar i{display:block;height:calc((100% - 24px) * var(--r));min-height:3px;background:var(--accent);border-radius:6px 6px 0 0;margin-bottom:4px}
 .row{display:grid;grid-template-columns:96px 1fr auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}
-.row img{width:96px;height:52px;object-fit:cover;border-radius:6px;background:var(--h0);cursor:zoom-in}
+.row img{width:96px;height:52px;object-fit:cover;object-position:top;border-radius:6px;background:var(--h0);cursor:zoom-in}
 .acts{display:flex;gap:6px}
 .lead{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;align-items:center;padding:6px 0}
 .track{grid-column:1/-1;height:8px;border-radius:4px;background:var(--h0)}.track i{display:block;height:100%;border-radius:4px;background:var(--accent)}
@@ -107,14 +107,14 @@ html[data-device=tablet][data-orient=portrait] .two,html[data-device=tablet][dat
   <main>
     <header>
       <div><h1 id="h1"></h1><p id="sub" class="mute"></p></div>
-      <button class="btn" data-go="checks"><span id="plus"></span>Add check</button>
+      <button class="btn" data-go="checks"><span id="plus"></span>Add receipt</button>
     </header>
     <div id="view" style="display:contents"></div>
     <p style="text-align:center"><button class="ghost" id="devbtn" type="button">Layout</button></p>
   </main>
 </div>
 <div id="veil"></div>
-<dialog id="viewer"><img alt="Check image"></dialog>
+<dialog id="viewer"><img alt="Receipt image"></dialog>
 <dialog id="cam"><video id="vid" autoplay playsinline muted></video><p id="camerr" class="mute" role="alert"></p>
   <div class="camacts"><button class="btn" id="snap">Take photo</button><button class="ghost" id="camx">Cancel</button></div></dialog>
 
@@ -137,20 +137,20 @@ const ICON = {
 };
 const ico = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
 const TITLES = {
-  overview: ["Your vault at a glance", "Every check you've saved, in one place."],
-  checks: ["Checks", "Add a new check or search the ones you've saved."],
-  calendar: ["Check calendar", "See when your checks came in, day by day."]
+  overview: ["Your receipts at a glance", "Every receipt you've saved, in one place."],
+  checks: ["Receipts", "Add a new receipt or search the ones you've saved."],
+  calendar: ["Receipt calendar", "See when you shopped, day by day."]
 };
-const LABEL = {overview: "Overview", checks: "Checks", calendar: "Calendar"};
-const EMPTY = '<p class="mute">Nothing here yet. Add your first check on the Checks page.</p>';
+const LABEL = {overview: "Overview", checks: "Receipts", calendar: "Calendar"};
+const EMPTY = '<p class="mute">Nothing here yet. Add your first receipt on the Receipts page.</p>';
 
 const now = new Date(), today = fmt(now);
 let checks = [], view = "overview", cal = {y: now.getFullYear(), m: now.getMonth()}, sel = today;
 
 const row = (c, del) => `<article class="row">
-  <img src="/api/checks/${c.id}/thumb" alt="Front of check to ${esc(c.payee)}" data-id="${c.id}" data-side="front">
+  <img src="/api/checks/${c.id}/thumb" alt="Receipt from ${esc(c.payee)}" data-id="${c.id}" data-side="front">
   <div><b>${esc(c.payee)}</b> ${money(c.amount)}<br><span class="mute">${c.date}${c.check_number ? " · #" + esc(c.check_number) : ""}${c.memo ? " · " + esc(c.memo) : ""}</span></div>
-  <div class="acts">${c.has_back ? `<button class="ghost" data-id="${c.id}" data-side="back">View back</button>` : ""}${del && c.has_back ? `<button class="ghost red" data-delback="${c.id}">Delete back</button>` : ""}${del ? `<button class="ghost red" data-del="${c.id}">Delete check</button>` : ""}</div>
+  <div class="acts">${c.has_back ? `<button class="ghost" data-id="${c.id}" data-side="back">View 2nd photo</button>` : ""}${del && c.has_back ? `<button class="ghost red" data-delback="${c.id}">Delete 2nd photo</button>` : ""}${del ? `<button class="ghost red" data-del="${c.id}">Delete receipt</button>` : ""}</div>
 </article>`;
 
 function viewOverview() {
@@ -158,8 +158,8 @@ function viewOverview() {
   const week = checks.filter(c => c.date >= fmt(wk) && c.date <= today);
   const month = checks.filter(c => c.date.startsWith(today.slice(0, 7)));
   const stats = [
-    ["checks", "Checks saved", checks.length], ["calendar", "This month", money(sum(month))],
-    ["overview", "Last 7 days", week.length], ["checks", "Average check", money(checks.length ? sum(checks) / checks.length : 0)]
+    ["checks", "Receipts saved", checks.length], ["calendar", "This month", money(sum(month))],
+    ["overview", "Last 7 days", week.length], ["checks", "Average receipt", money(checks.length ? sum(checks) / checks.length : 0)]
   ];
   const months = [...Array(6)].map((_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
@@ -172,28 +172,28 @@ function viewOverview() {
   $("#view").innerHTML = `
   <div class="stats">${stats.map(s => `<div class="card stat"><span class="dot">${ico(s[0])}</span><div><b>${s[2]}</b><span class="mute">${s[1]}</span></div></div>`).join("")}</div>
   <div class="two">
-    <section class="card"><h2>Total by month</h2><div class="bars">${months.map(m => `<div class="bar" title="${money(m.total)}"><i style="--r:${m.total / max}"></i>${m.label}</div>`).join("")}</div></section>
-    <section class="card"><h2>Recent checks</h2>${checks.length ? checks.slice(0, 4).map(c => row(c)).join("") : EMPTY}</section>
+    <section class="card"><h2>Spending by month</h2><div class="bars">${months.map(m => `<div class="bar" title="${money(m.total)}"><i style="--r:${m.total / max}"></i>${m.label}</div>`).join("")}</div></section>
+    <section class="card"><h2>Recent receipts</h2>${checks.length ? checks.slice(0, 4).map(c => row(c)).join("") : EMPTY}</section>
   </div>
-  <section class="card"><h2>Top payees</h2>${top.length ? top.map(p => `<div class="lead"><span>${esc(p.name)}</span><span class="mute">${p.n} check${p.n > 1 ? "s" : ""}</span><b>${money(p.total)}</b><div class="track"><i style="width:${Math.round(p.total / tmax * 100)}%"></i></div></div>`).join("") : EMPTY}</section>`;
+  <section class="card"><h2>Top stores</h2>${top.length ? top.map(p => `<div class="lead"><span>${esc(p.name)}</span><span class="mute">${p.n} receipt${p.n > 1 ? "s" : ""}</span><b>${money(p.total)}</b><div class="track"><i style="width:${Math.round(p.total / tmax * 100)}%"></i></div></div>`).join("") : EMPTY}</section>`;
 }
 
 function viewChecks() {
   $("#view").innerHTML = `
-  <section class="card"><h2>Add a check</h2>
+  <section class="card"><h2>Add a receipt</h2>
     <form id="form">
-      <div class="pick"><label for="f-front">Front of check</label><input id="f-front" type="file" name="front" accept="image/*" required>
+      <div class="pick"><label for="f-front">Photo of the receipt</label><input id="f-front" type="file" name="front" accept="image/*" required>
         <div class="acts"><button type="button" class="ghost" data-cam="front">Use camera</button><span class="mute" id="ok-front"></span></div></div>
-      <div class="pick"><label for="f-back">Back of check (optional)</label><input id="f-back" type="file" name="back" accept="image/*">
+      <div class="pick"><label for="f-back">Second photo, for a long receipt (optional)</label><input id="f-back" type="file" name="back" accept="image/*">
         <div class="acts"><button type="button" class="ghost" data-cam="back">Use camera</button><span class="mute" id="ok-back"></span></div></div>
       <label>Date<input type="date" name="date" required></label>
-      <label>Payee<input name="payee" maxlength="100" required></label>
-      <label>Amount ($)<input name="amount" type="number" step="0.01" min="0" required></label>
-      <label>Check number<input name="check_number" maxlength="30"></label>
-      <label class="wide">Memo<input name="memo" maxlength="200"></label>
-      <div class="wide bar2"><p id="msg" class="mute" role="status"></p><button class="btn" id="save">Save check</button></div>
+      <label>Store<input name="payee" maxlength="100" required></label>
+      <label>Total ($)<input name="amount" type="number" step="0.01" min="0" required></label>
+      <label>Receipt number (optional)<input name="check_number" maxlength="30"></label>
+      <label class="wide">Notes<input name="memo" maxlength="200"></label>
+      <div class="wide bar2"><p id="msg" class="mute" role="status"></p><button class="btn" id="save">Save receipt</button></div>
     </form></section>
-  <section class="card"><div class="bar2"><h2>Saved checks</h2><input id="q" type="search" placeholder="Search payee, amount, check number" aria-label="Search checks"><span id="total" class="mute"></span></div><div id="list"></div></section>`;
+  <section class="card"><div class="bar2"><h2>Saved receipts</h2><input id="q" type="search" placeholder="Search store, total, receipt number, notes" aria-label="Search receipts"><span id="total" class="mute"></span></div><div id="list"></div></section>`;
   $("#form").elements.date.value = today;
   list();
 }
@@ -201,8 +201,8 @@ function viewChecks() {
 function list() {
   const q = ($("#q") ? $("#q").value : "").trim().toLowerCase();
   const rows = checks.filter(c => !q || [c.payee, c.check_number, c.memo, String(c.amount)].join(" ").toLowerCase().includes(q));
-  $("#total").textContent = rows.length ? `${rows.length} checks, ${money(sum(rows))}` : "";
-  $("#list").innerHTML = rows.length ? rows.map(c => row(c, true)).join("") : `<p class="mute">${checks.length ? "No checks match that search." : "No checks yet. Add your first one above."}</p>`;
+  $("#total").textContent = rows.length ? `${rows.length} receipts, ${money(sum(rows))}` : "";
+  $("#list").innerHTML = rows.length ? rows.map(c => row(c, true)).join("") : `<p class="mute">${checks.length ? "No receipts match that search." : "No receipts yet. Add your first one above."}</p>`;
 }
 
 function viewCalendar() {
@@ -212,7 +212,7 @@ function viewCalendar() {
   let cells = "<span></span>".repeat(lead);
   for (let d = 1; d <= days; d++) {
     const k = `${key}-${pad(d)}`, n = cnt[k] || 0;
-    cells += `<button class="day l${Math.min(n, 4)}${k === sel ? " sel" : ""}${k === today ? " today" : ""}" data-day="${k}" aria-label="${k}: ${n} checks">${d}</button>`;
+    cells += `<button class="day l${Math.min(n, 4)}${k === sel ? " sel" : ""}${k === today ? " today" : ""}" data-day="${k}" aria-label="${k}: ${n} receipts">${d}</button>`;
   }
   const mc = checks.filter(c => c.date.startsWith(key)), dc = checks.filter(c => c.date === sel);
   $("#view").innerHTML = `<div class="calwrap">
@@ -221,8 +221,8 @@ function viewCalendar() {
     <h2>${MONTHS[m]} ${y}</h2><button class="ghost" data-mv="0">Today</button></div>
     <div class="cal head">${["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d => `<span>${d}</span>`).join("")}</div>
     <div class="cal">${cells}</div>
-    <p class="mute">${mc.length} checks this month, ${money(sum(mc))}. Darker days have more checks.</p></section>
-  <section class="card"><h2>${sel}</h2>${dc.length ? dc.map(c => row(c)).join("") : '<p class="mute">No checks on this day.</p>'}</section></div>`;
+    <p class="mute">${mc.length} receipts this month, ${money(sum(mc))}. Darker days have more receipts.</p></section>
+  <section class="card"><h2>${sel}</h2>${dc.length ? dc.map(c => row(c)).join("") : '<p class="mute">No receipts on this day.</p>'}</section></div>`;
 }
 
 function go(v, animate = true) {
@@ -254,8 +254,8 @@ document.addEventListener("click", async e => {
   }
   if (d.side) { $("#viewer img").src = `/api/checks/${d.id}/${d.side}`; $("#viewer").showModal(); }
   if (d.cam) openCam(d.cam);
-  if (d.delback && confirm("Delete just the back image of this check? The front stays.")) { await fetch(`/api/checks/${d.delback}/back`, {method: "DELETE"}); load(); }
-  if (d.del && confirm("Delete this check and its images? This can't be undone.")) { await fetch(`/api/checks/${d.del}`, {method: "DELETE"}); load(); }
+  if (d.delback && confirm("Delete just the second photo of this receipt? The first photo stays.")) { await fetch(`/api/checks/${d.delback}/back`, {method: "DELETE"}); load(); }
+  if (d.del && confirm("Delete this receipt and its photos? This can't be undone.")) { await fetch(`/api/checks/${d.del}`, {method: "DELETE"}); load(); }
   if (t.id === "out") { await fetch("/logout", {method: "POST"}); location = "/login"; }
 });
 $("#viewer").addEventListener("click", () => $("#viewer").close());
@@ -267,12 +267,12 @@ function warnings(fd) {
   const date = String(fd.get("date")), num = String(fd.get("check_number")).trim(), out = [];
   const same = checks.filter(c => c.payee.trim().toLowerCase() === payee);
   const dup = same.find(c => (Math.round(c.amount * 100) === Math.round(amount * 100) && c.date === date) || (num && c.check_number === num));
-  if (dup) out.push(`Possible duplicate: you already saved a check to ${dup.payee} for ${money(dup.amount)} dated ${dup.date}${dup.check_number ? " (#" + dup.check_number + ")" : ""}.`);
+  if (dup) out.push(`Possible duplicate: you already saved a receipt from ${dup.payee} for ${money(dup.amount)} dated ${dup.date}${dup.check_number ? " (#" + dup.check_number + ")" : ""}.`);
   if (same.length >= 3) {
     const v = same.map(c => c.amount).sort((a, b) => a - b), n = v.length;
     const med = n % 2 ? v[(n - 1) / 2] : (v[n / 2 - 1] + v[n / 2]) / 2;
-    if (med > 0 && (amount > med * 3 || amount < med / 3) && Math.abs(amount - med) >= 20)
-      out.push(`Unusual amount: your ${n} other checks to ${same[0].payee} are usually about ${money(med)}, and this one is ${money(amount)}.`);
+    if (med > 0 && amount > med * 3 && amount - med >= 50)
+      out.push(`Unusual total: your ${n} other receipts from ${same[0].payee} are usually about ${money(med)}, and this one is ${money(amount)}.`);
   }
   return out;
 }
@@ -293,7 +293,7 @@ document.addEventListener("submit", async e => {
       catch (e) { m = "The server had a problem (" + r.status + "). Please try again."; }
       throw new Error(m);
     }
-    f.reset(); f.elements.date.value = today; $("#ok-front").textContent = ""; $("#ok-back").textContent = ""; msg.textContent = "Check saved.";
+    f.reset(); f.elements.date.value = today; $("#ok-front").textContent = ""; $("#ok-back").textContent = ""; msg.textContent = "Receipt saved.";
     await load();
   } catch (err) { msg.textContent = "Could not save: " + err.message; }
   btn.disabled = false;

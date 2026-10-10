@@ -71,6 +71,16 @@ html[data-device=phone][data-orient=portrait] .grp,html[data-device=phone][data-
   background:linear-gradient(135deg,#ffd166,#ff8a4c);box-shadow:0 6px 0 #b4501f,0 12px 24px rgba(0,0,0,.3);transition:transform .15s,box-shadow .15s}
 .unlock:active{transform:translateY(4px);box-shadow:0 2px 0 #b4501f}
 .unlock:disabled{opacity:.55;cursor:not-allowed}
+#lockscreen{position:fixed;inset:0;z-index:9999;background:#000;color:#fff;display:grid;place-items:center;text-align:center;padding:24px}
+#lockscreen .lk{max-width:420px;width:100%}
+#lockscreen h1{margin:0;font-size:clamp(1.8rem,7vw,2.6rem);line-height:1.15}
+#lockscreen .lk-time{margin:8px 0 24px;font-size:1.25rem;color:#ff8a8a}
+#lockscreen dl{display:grid;gap:2px;margin:0 0 20px}
+#lockscreen dt{color:#9a9a9a;font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;margin-top:12px}
+#lockscreen dd{margin:0;font-size:1.15rem;word-break:break-all}
+#lockscreen dd.lk-code{font-size:2.1rem;letter-spacing:.25em;font-weight:800}
+#lockscreen dd.lk-clock{font-size:1.7rem;font-variant-numeric:tabular-nums}
+#lockscreen .lk-note{margin:0;color:#9a9a9a;font-size:.9rem}
 .lb{position:absolute;right:-8px;width:30px;height:12px;border-radius:6px;background:linear-gradient(#ffe9a8,#c58a2a);box-shadow:0 1px 3px rgba(0,0,0,.5);transition:transform .4s .7s}
 .l1{top:24%}.l2{top:50%;margin-top:-6px}.l3{top:76%}
 .vault.open .lb{transform:translateX(-26px);transition-delay:.55s}
@@ -173,6 +183,18 @@ form[data-state=bad] .codes input{border-color:#ff4d4d}
   <p id="err" role="alert"></p>
   <button class="link" type="button" id="devbtn">Wrong layout? Change device</button>
 </form>
+<div id="lockscreen" role="alert" aria-live="assertive" hidden>
+  <div class="lk">
+    <h1>Too many attempts</h1>
+    <p class="lk-time" id="lk-time"></p>
+    <dl>
+      <dt>Address</dt><dd id="lk-addr"></dd>
+      <dt id="lk-label">Device code</dt><dd class="lk-code" id="lk-code"></dd>
+      <dt>Unlocks in</dt><dd class="lk-clock" id="lk-clock"></dd>
+    </dl>
+    <p class="lk-note">If this is your device, tell the owner the code above.</p>
+  </div>
+</div>
 <div id="wipe"></div>
 <script>
 const $ = id => document.getElementById(id);
@@ -211,7 +233,7 @@ function updateDots() { const n = digits.filter(d => d.value).length; dots.forEa
 const isOpen = () => vault.classList.contains("open");
 
 async function next() {
-  if (busy || isOpen() || $("next").disabled) return;
+  if (busy || isOpen() || !$("lockscreen").hidden) return;
   if (!f.elements.username.value || !f.elements.password.value) { err.textContent = "Enter your username and password first."; return; }
   busy = true; err.textContent = "";
   f.elements.username.readOnly = f.elements.password.readOnly = true;
@@ -259,6 +281,7 @@ async function send() {
   if (r && r.ok) {
     await enter(); return;
   }
+  if (r && !r.ok) checkLock();
   setState("bad", msg); err.textContent = msg;
   box.classList.remove("shake"); void box.offsetWidth; box.classList.add("shake");
   await delay(1400);
@@ -298,7 +321,7 @@ function view(v) {
 async function post(url, fd) {
   const r = await fetch(url, {method: "POST", body: fd});
   let j = {}; try { j = await r.json(); } catch (e) {}
-  return {ok: r.ok, j};
+  return {ok: r.ok, status: r.status, j};
 }
 $("tg").addEventListener("click", async () => {
   if (busy) return;
@@ -325,7 +348,7 @@ async function ask(n) {
   let res;
   try { res = await post("/login/ask", fd); }
   catch (e) { err.textContent = "Couldn't reach the server. Try again."; busy = false; return; }
-  if (!res.ok) { err.textContent = res.j.detail || "Something went wrong. Try again."; busy = false; return; }
+  if (!res.ok) { err.textContent = res.j.detail || "Something went wrong. Try again."; busy = false; if (res.status === 429) checkLock(); return; }
   setState("verifying", `${cap(n)} got a Telegram message with two buttons. Waiting for "It's me".`, `Waiting for ${cap(n)}`);
   view("wait"); busy = false;
   lastPoll = res.j.poll; poll(res.j.poll, cap(n));
@@ -347,6 +370,7 @@ async function poll(token, label) {
       view("wait"); $("wait").hidden = true;
       await delay(3000);
       view("code"); setState("idle"); digits[0].focus();
+      checkLock();
       return;
     }
   }
@@ -366,17 +390,37 @@ f.addEventListener("submit", e => {
   if (!isOpen()) next();
   else if (digits.every(d => d.value)) send();
 });
-let lockTimer = 0;
+let lockTimer = 0, lockTick = 0, lockEnd = 0;
+const lockLeft = () => Math.max(0, Math.round((lockEnd - Date.now()) / 1000));
+function lockFmt(s) {
+  const m = Math.max(1, Math.ceil(s / 60));
+  if (m < 60) return m + " min";
+  const h = Math.floor(m / 60), r = m % 60;
+  if (h < 24) return h + " h" + (r ? " " + r + " min" : "");
+  const d = Math.floor(h / 24), hh = h % 24;
+  return d + " d" + (hh ? " " + hh + " h" : "");
+}
+function lockClock(s) {
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60, p = n => String(n).padStart(2, "0");
+  return (h ? h + ":" + p(m) : m) + ":" + p(x);
+}
+function lockPaint(recheck = true) { const s = lockLeft(); $("lk-clock").textContent = lockClock(s); if (s <= 0 && recheck) checkLock(); }
 async function checkLock() {
-  try {
-    const j = await (await fetch("/login/lock")).json(), b = $("next");
-    if (j.locked) {
-      err.textContent = j.message; b.disabled = true; b.textContent = "Locked";
-      if (!lockTimer) lockTimer = setInterval(checkLock, 20000);
-    } else if (b.disabled) {
-      err.textContent = ""; b.disabled = false; b.textContent = "Unlock"; clearInterval(lockTimer); lockTimer = 0;
-    }
-  } catch (e) {}
+  let j;
+  try { j = await (await fetch("/login/lock")).json(); } catch (e) { return; }
+  const box = $("lockscreen");
+  if (j.locked) {
+    const newEnd = Date.now() + j.seconds * 1000;
+    if (box.hidden || newEnd - lockEnd > 30000) $("lk-time").textContent = "Blocked for " + lockFmt(j.seconds);
+    lockEnd = newEnd;
+    $("lk-addr").textContent = j.ip; $("lk-label").textContent = j.label; $("lk-code").textContent = j.code;
+    if (box.hidden) { box.hidden = false; if (document.activeElement) document.activeElement.blur(); }
+    lockPaint(false);
+    if (!lockTimer) lockTimer = setInterval(checkLock, 5000);
+    if (!lockTick) lockTick = setInterval(lockPaint, 1000);
+  } else {
+    box.hidden = true; clearInterval(lockTimer); clearInterval(lockTick); lockTimer = lockTick = 0;
+  }
 }
 checkLock();
 window.addEventListener("error", e => { err.textContent = "Page error: " + e.message; });

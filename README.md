@@ -88,3 +88,9 @@ Send `/timeouts` to the bot (only the people on `TELEGRAM_USERS` get an answer).
 Honest limits: the id lives in the browser, so clearing cookies, a private window, or another browser counts as a new device. A banned device that does this is not banned any more, but it has to start over at 5 wrong tries and still counts toward its network's 20.
 
 **How the address is worked out:** Render does not clean the `X-Forwarded-For` header, so anyone can write a fake one there. The site uses the Cloudflare headers instead (`cf-connecting-ip`, then `true-client-ip`), which visitors can't fake. After a deploy, the Render Logs show one line, `Visitor address comes from: cf-connecting-ip`. If it says `connection` instead, addresses can be faked, so tell the site's builder. An IPv6 visitor counts as their whole /64 network, shown like `2606:4700:abcd:12::/64`.
+
+## Store logos
+
+When you type a store such as Target or Walmart, a small logo shows next to its name, in the form and on the receipt tiles. The site gets each logo from the store's own website icon, once, and remembers it. A store it doesn't know gets a colored badge with its first letter instead, so nothing ever looks broken.
+
+The stores it knows are listed in `stores.json`. To add one, open that file on GitHub, click the pencil, add a line like `"food lion": "foodlion.com"` (the name in lowercase, no punctuation, then the website), and commit. Only websites in that file are ever contacted. The site asks Google's icon service (then DuckDuckGo's) for the icon, so those services see which store websites are looked up, from the site's address and not yours. No receipt details, photos or totals are sent.

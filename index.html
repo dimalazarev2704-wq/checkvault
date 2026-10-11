@@ -35,6 +35,31 @@ nav button.on{color:var(--ink);border-bottom-color:var(--pen)}
 main{max-width:1040px;margin:0 auto;padding:26px 28px 70px}
 .foot{margin-top:40px;text-align:center}
 
+/* log out: the runner heads for the door, the door shuts behind him, and he drops out the bottom */
+.lo{position:relative;z-index:6;display:inline-flex;align-items:center;gap:12px;padding:9px 12px 9px 16px;border:0;border-radius:8px;background:var(--ink);color:var(--desk);font-weight:600;cursor:pointer}
+.lo .ic{width:34px;height:26px;overflow:visible;flex:none}
+.lo .gap{fill:#0a1124}
+.lo .leaf{fill:#3b6cf0}
+.lo .door{transform-box:fill-box;transform-origin:100% 50%}
+.lo .door circle{fill:#0a1124}
+.lo .lines path{fill:none;stroke:#8aa4f7;stroke-width:1.5;stroke-linecap:round;opacity:0}
+.lo .p2{opacity:0}
+.lo .fall{position:absolute;right:24px;top:100%;width:22px;height:22px;overflow:visible;opacity:0;pointer-events:none}
+.lo.go{pointer-events:none;animation:loWobble .45s .5s both}
+.lo.go .man{animation:loRun .55s ease-in both}
+.lo.go .p1{animation:loA .17s steps(1) infinite}
+.lo.go .p2{animation:loB .17s steps(1) infinite}
+.lo.go .door{animation:loDoor .9s ease-in-out both}
+.lo.go .lines path{animation:loLines .9s both}
+.lo.go .fall{animation:loDrop .7s .62s cubic-bezier(.4,0,.8,1) both}
+@keyframes loRun{0%{transform:translateX(0);opacity:1}70%{transform:translateX(13px);opacity:1}100%{transform:translateX(17px) scale(.7);opacity:0}}
+@keyframes loA{0%{opacity:1}50%{opacity:0}}
+@keyframes loB{0%{opacity:0}50%{opacity:1}}
+@keyframes loDoor{0%,30%{transform:scaleX(1)}45%,60%{transform:scaleX(.28)}80%,100%{transform:scaleX(1)}}
+@keyframes loLines{0%,55%{opacity:0}66%{opacity:1}100%{opacity:0}}
+@keyframes loWobble{0%,100%{transform:rotate(0)}20%{transform:rotate(-2.5deg)}40%{transform:rotate(2deg)}60%{transform:rotate(-1.2deg)}80%{transform:rotate(.6deg)}}
+@keyframes loDrop{0%{opacity:0;transform:translate(0,-14px) rotate(0)}15%{opacity:1}100%{opacity:0;transform:translate(8px,46px) rotate(330deg)}}
+
 /* overview */
 .lead{margin:14px 0 4px;font-size:clamp(1.7rem,4.6vw,2.6rem);font-weight:800;letter-spacing:-.025em;line-height:1.15}
 .strip{display:flex;gap:18px;overflow-x:auto;padding:2px 2px 14px}
@@ -103,6 +128,8 @@ dialog img{max-width:100%;max-height:85vh;display:block}
 
 /* small screens and phones: tabs move to the bottom */
 html.compact .top{padding:12px 16px;gap:12px}
+html.compact .lo{padding:8px 10px 8px 12px;gap:8px;font-size:.92rem}
+html.compact .lo .ic{width:30px}
 html.compact nav{position:fixed;left:0;right:0;bottom:0;z-index:5;gap:0;background:var(--paper);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
 html.compact nav button{flex:1;padding:15px 4px;border-bottom:0;border-top:2px solid transparent}
 html.compact nav button.on{border-top-color:var(--pen)}
@@ -127,7 +154,22 @@ html.enter .fade{animation-delay:.6s}
   <nav id="nav" aria-label="Main"></nav>
   <span class="sp"></span>
   <button class="btn" data-go="checks">Add receipt</button>
-  <button class="lnk" id="out" type="button">Sign out</button>
+  <button class="lo" id="out" type="button"><span>Log out</span>
+    <svg class="ic" viewBox="0 0 34 26" aria-hidden="true">
+      <rect class="gap" x="22" y="1" width="11" height="24" rx="1.5"/>
+      <g class="door"><rect class="leaf" x="22" y="1" width="11" height="24" rx="1.5"/><circle cx="25.4" cy="13" r="1"/></g>
+      <g class="lines"><path d="M15 9h4M14 13h5M15 17h4"/></g>
+      <g class="man" fill="none" stroke="#3b6cf0" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="9.5" cy="5" r="2.5" fill="#3b6cf0" stroke="none"/>
+        <path d="M9 9l-1.5 6"/>
+        <g class="p1"><path d="M7.5 15l-3.5 6M7.5 15l4 4.5l.5 3"/><path d="M9 10l-3.5 3M9 10l5 1.5"/></g>
+        <g class="p2"><path d="M7.5 15l3.5 6M7.5 15l-3.5 3.5l-2 1.5"/><path d="M9 10l4 3M9 10l-4.5 1"/></g>
+      </g>
+    </svg>
+    <svg class="fall" viewBox="0 0 22 22" aria-hidden="true" fill="none" stroke="#3b6cf0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="7" cy="6" r="2.2" fill="#3b6cf0" stroke="none"/><path d="M8 8.5l5 4M13 12.5l5-3M13 12.5l2 6M9.5 10.5l-5 1M10 10l4-3.5"/>
+    </svg>
+  </button>
 </header>
 <main>
   <h1 id="h1"></h1><p id="sub" class="mute"></p>
@@ -298,8 +340,23 @@ document.addEventListener("click", async e => {
   if (d.cam) openCam(d.cam);
   if (d.delback && confirm("Delete just the second photo of this receipt? The first photo stays.")) { await fetch(`/api/checks/${d.delback}/back`, {method: "DELETE"}); load(); }
   if (d.del && confirm("Delete this receipt and its photos? This can't be undone.")) { await fetch(`/api/checks/${d.del}`, {method: "DELETE"}); load(); }
-  if (t.id === "out") { await fetch("/logout", {method: "POST"}); location = "/login"; }
+  if (t.id === "out") logOut(t);
 });
+
+// Log out: play the little door scene, and sign out at the same time. If signing out fails, say so instead of pretending.
+async function logOut(btn) {
+  if (btn.classList.contains("go")) return;
+  btn.classList.add("go"); btn.setAttribute("aria-busy", "true");
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let ok = false;
+  try {
+    const [r] = await Promise.all([fetch("/logout", {method: "POST"}), new Promise(res => setTimeout(res, calm ? 0 : 1450))]);
+    ok = r.ok;
+  } catch (e) {}
+  if (ok) { location = "/login"; return; }
+  btn.classList.remove("go"); btn.removeAttribute("aria-busy");
+  alert("Couldn't log out. Check your connection and try again.");
+}
 $("#viewer").addEventListener("click", () => $("#viewer").close());
 let lgTimer = 0;
 document.addEventListener("input", e => {

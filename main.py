@@ -853,6 +853,63 @@ def jpeg(img, size, quality):
     return out.getvalue()
 
 
+# ---- store logos: the small icon each store's own website uses, fetched once and remembered ----
+STORES = {}  # normal-form store name -> website; edit stores.json to add more
+try:
+    for _k, _v in json.loads((Path(__file__).parent / "stores.json").read_text("utf-8")).items():
+        if isinstance(_v, str) and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", _v.lower()):
+            STORES[" ".join(re.sub(r"[^a-z0-9]+", " ", _k.lower().replace("'", "").replace("&", " and ")).split())] = _v.lower()
+except Exception as _e:
+    print("stores.json not loaded:", type(_e).__name__, flush=True)
+logos = {}  # website -> (png bytes or None, remembered until)
+logo_lock = threading.Lock()
+
+
+def store_domain(name):
+    """Which website belongs to a typed store name. Only sites listed in stores.json are ever contacted."""
+    t = re.sub(r"[^a-z0-9]+", " ", str(name).lower().replace("'", "").replace("&", " and ")).split()
+    for cut in range(len(t), 0, -1):  # "Walmart Supercenter #123" -> "walmart"
+        d = STORES.get(" ".join(t[:cut]))
+        if d:
+            return d
+    return None
+
+
+def fetch_logo(domain):
+    with logo_lock:  # one fetch at a time; everyone else then finds it already remembered
+        now = time.time()
+        hit = logos.get(domain)
+        if hit and hit[1] > now:
+            return hit[0]
+        png = None
+        for url in (f"https://www.google.com/s2/favicons?domain={domain}&sz=64", f"https://icons.duckduckgo.com/ip3/{domain}.ico"):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CheckVault"})
+                img = Image.open(io.BytesIO(urllib.request.urlopen(req, timeout=4).read(300_000)))
+                img.load()
+                if min(img.size) < 32:  # a generic placeholder or a blurry 16 px icon: use the letter badge instead
+                    continue
+                img = img.convert("RGBA")
+                img.thumbnail((64, 64))
+                out = io.BytesIO()
+                img.save(out, "PNG")
+                png = out.getvalue()
+                break
+            except Exception:
+                continue
+        logos[domain] = (png, now + (86400 if png else 3600))
+        return png
+
+
+@app.get("/api/logo")
+def store_logo(store: str = ""):
+    domain = store_domain(store[:100])
+    png = fetch_logo(domain) if domain else None
+    if not png:
+        return Response(status_code=404, headers={"Cache-Control": "private, max-age=3600"})
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.post("/api/checks")
 def add_check(
     date: str = Form(...), payee: str = Form(...), amount: float = Form(...),

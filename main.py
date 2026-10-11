@@ -861,6 +861,7 @@ try:
             STORES[" ".join(re.sub(r"[^a-z0-9]+", " ", _k.lower().replace("'", "").replace("&", " and ")).split())] = _v.lower()
 except Exception as _e:
     print("stores.json not loaded:", type(_e).__name__, flush=True)
+print("Store logos:", len(STORES), "stores known", flush=True)
 logos = {}  # website -> (png bytes or None, remembered until)
 logo_lock = threading.Lock()
 
@@ -875,38 +876,57 @@ def store_domain(name):
     return None
 
 
-def fetch_logo(domain):
+def fetch_logo(domain, trace=None, fresh=False):
+    """Ask the icon services for a store's icon, keep the best one. Google's tiny answers can be a generic globe,
+    so from Google only 32 px and up counts; DuckDuckGo answers with the site's real icon, so 16 px and up counts."""
     with logo_lock:  # one fetch at a time; everyone else then finds it already remembered
         now = time.time()
         hit = logos.get(domain)
-        if hit and hit[1] > now:
+        if hit and hit[1] > now and not fresh:
             return hit[0]
-        png = None
-        for url in (f"https://www.google.com/s2/favicons?domain={domain}&sz=64", f"https://icons.duckduckgo.com/ip3/{domain}.ico"):
+        best = None
+        for name, url, smallest in (("google", f"https://www.google.com/s2/favicons?domain={domain}&sz=128", 32),
+                                    ("duckduckgo", f"https://icons.duckduckgo.com/ip3/{domain}.ico", 16)):
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CheckVault"})
-                img = Image.open(io.BytesIO(urllib.request.urlopen(req, timeout=4).read(300_000)))
+                raw = urllib.request.urlopen(req, timeout=4).read(300_000)
+                img = Image.open(io.BytesIO(raw))
                 img.load()
-                if min(img.size) < 32:  # a generic placeholder or a blurry 16 px icon: use the letter badge instead
+                size = min(img.size)
+                if trace is not None:
+                    trace.append({"source": name, "answered": True, "size": list(img.size), "accepted": size >= smallest})
+                if size < smallest:
                     continue
-                img = img.convert("RGBA")
-                img.thumbnail((64, 64))
-                out = io.BytesIO()
-                img.save(out, "PNG")
-                png = out.getvalue()
-                break
-            except Exception:
-                continue
-        logos[domain] = (png, now + (86400 if png else 3600))
+                if best is None or size > best[0]:
+                    img = img.convert("RGBA")
+                    img.thumbnail((64, 64))
+                    out = io.BytesIO()
+                    img.save(out, "PNG")
+                    best = (size, out.getvalue())
+                if size >= 48:
+                    break  # good enough, no need to ask the next one
+            except Exception as e:
+                if trace is not None:
+                    trace.append({"source": name, "answered": False, "error": f"{type(e).__name__}: {str(e)[:120]}"})
+        png = best[1] if best else None
+        if png is None:
+            print("LOGO: no usable icon for", domain, flush=True)
+        logos[domain] = (png, now + (86400 if png else 300))  # a miss is only remembered for 5 minutes
         return png
 
 
 @app.get("/api/logo")
-def store_logo(store: str = ""):
+def store_logo(store: str = "", debug: str = ""):
     domain = store_domain(store[:100])
+    if debug:  # a plain-words report of what happened, for when a logo doesn't show
+        trace = []
+        png = fetch_logo(domain, trace, fresh=True) if domain else None
+        return JSONResponse({"stores_known": len(STORES), "store": store[:100], "website": domain, "tries": trace,
+                             "result": ("icon found" if png else "no usable icon came back") if domain else
+                                       "that store is not listed in stores.json (or stores.json did not load)"})
     png = fetch_logo(domain) if domain else None
     if not png:
-        return Response(status_code=404, headers={"Cache-Control": "private, max-age=3600"})
+        return Response(status_code=404, headers={"Cache-Control": "private, max-age=300"})
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 

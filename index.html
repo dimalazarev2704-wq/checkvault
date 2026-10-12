@@ -200,7 +200,7 @@ const now = new Date(), today = fmt(now);
 let checks = [], view = "overview", cal = {y: now.getFullYear(), m: now.getMonth()}, sel = today;
 
 const hue = s => { let h = 0; for (const ch of String(s).trim().toLowerCase()) h = (h * 31 + ch.codePointAt(0)) % 360; return h; };
-const badgeInner = name => `${esc(([...String(name).trim()][0] || "?").toUpperCase())}<img class="logo" src="/api/logo?store=${encodeURIComponent(String(name).trim().slice(0, 100))}" alt="" loading="lazy">`;
+const badgeInner = name => `${esc(([...String(name).trim()][0] || "?").toUpperCase())}<img class="logo" src="/api/logo?store=${encodeURIComponent(String(name).trim().slice(0, 100))}&v=2" alt="" loading="lazy">`;
 const badge = name => `<span class="lg" style="--h:${hue(name)}">${badgeInner(name)}</span>`;
 const noteHtml = (c, q) => (c.check_number ? "No. " + hl(c.check_number, q) + (c.memo ? "<br>" : "") : "") + (c.memo ? hl(c.memo, q) : "");
 const tile = (c, del, q = "") => `<article class="tile" data-cid="${c.id}">

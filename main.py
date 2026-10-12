@@ -854,21 +854,34 @@ def jpeg(img, size, quality):
 
 
 # ---- store logos: the small icon each store's own website uses, fetched once and remembered ----
-STORES = {}  # normal-form store name -> website; edit stores.json to add more
+# Built in, so the logos work even if stores.json is missing. stores.json (next to this file) only ADDS stores.
+DEFAULT_STORES = json.loads("""{"walmart":"walmart.com","wal mart":"walmart.com","sams club":"samsclub.com","target":"target.com","costco":"costco.com","kroger":"kroger.com","publix":"publix.com","food lion":"foodlion.com","harris teeter":"harristeeter.com","lowes foods":"lowesfoods.com","aldi":"aldi.us","lidl":"lidl.com","whole foods":"wholefoodsmarket.com","trader joes":"traderjoes.com","safeway":"safeway.com","wegmans":"wegmans.com","heb":"heb.com","h e b":"heb.com","meijer":"meijer.com","giant eagle":"gianteagle.com","dollar general":"dollargeneral.com","dollar tree":"dollartree.com","family dollar":"familydollar.com","five below":"fivebelow.com","amazon":"amazon.com","home depot":"homedepot.com","lowes":"lowes.com","menards":"menards.com","ace hardware":"acehardware.com","harbor freight":"harborfreight.com","tractor supply":"tractorsupply.com","ikea":"ikea.com","best buy":"bestbuy.com","apple":"apple.com","micro center":"microcenter.com","gamestop":"gamestop.com","staples":"staples.com","office depot":"officedepot.com","bed bath and beyond":"bedbathandbeyond.com","homegoods":"homegoods.com","tj maxx":"tjmaxx.tjx.com","t j maxx":"tjmaxx.tjx.com","marshalls":"marshalls.com","ross":"rossstores.com","burlington":"burlington.com","old navy":"oldnavy.gap.com","gap":"gap.com","kohls":"kohls.com","macys":"macys.com","jcpenney":"jcpenney.com","nordstrom":"nordstrom.com","ulta":"ulta.com","sephora":"sephora.com","bath and body works":"bathandbodyworks.com","petsmart":"petsmart.com","petco":"petco.com","michaels":"michaels.com","joann":"joann.com","hobby lobby":"hobbylobby.com","barnes and noble":"barnesandnoble.com","dicks sporting goods":"dickssportinggoods.com","academy sports":"academy.com","autozone":"autozone.com","oreilly auto parts":"oreillyauto.com","oreilly":"oreillyauto.com","advance auto parts":"advanceautoparts.com","cvs":"cvs.com","walgreens":"walgreens.com","rite aid":"riteaid.com","starbucks":"starbucks.com","mcdonalds":"mcdonalds.com","chick fil a":"chick-fil-a.com","burger king":"bk.com","wendys":"wendys.com","taco bell":"tacobell.com","subway":"subway.com","chipotle":"chipotle.com","dunkin":"dunkindonuts.com","dunkin donuts":"dunkindonuts.com","panera":"panerabread.com","dominos":"dominos.com","pizza hut":"pizzahut.com","papa johns":"papajohns.com","kfc":"kfc.com","popeyes":"popeyes.com","five guys":"fiveguys.com","waffle house":"wafflehouse.com","cook out":"cookout.com","cookout":"cookout.com","bojangles":"bojangles.com","zaxbys":"zaxbys.com","sonic":"sonicdrivein.com","panda express":"pandaexpress.com","jersey mikes":"jerseymikes.com","jimmy johns":"jimmyjohns.com","shell":"shell.us","exxon":"exxon.com","bp":"bp.com","wawa":"wawa.com","sheetz":"sheetz.com","quiktrip":"quiktrip.com","7 eleven":"7-eleven.com","circle k":"circlek.com","speedway":"speedway.com","chevron":"chevron.com","murphy usa":"murphyusa.com","racetrac":"racetrac.com","uber":"uber.com","lyft":"lyft.com","usps":"usps.com","fedex":"fedex.com","ups store":"theupsstore.com"}""")
+STORES = {}  # normal-form store name -> website
+
+
+def norm_store(name):
+    return re.sub(r"[^a-z0-9]+", " ", str(name).lower().replace("'", "").replace("&", " and ")).split()
+
+
+def add_stores(items):
+    for k, v in items.items():
+        if isinstance(v, str) and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", v.lower()) and norm_store(k):
+            STORES[" ".join(norm_store(k))] = v.lower()
+
+
+add_stores(DEFAULT_STORES)
 try:
-    for _k, _v in json.loads((Path(__file__).parent / "stores.json").read_text("utf-8")).items():
-        if isinstance(_v, str) and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", _v.lower()):
-            STORES[" ".join(re.sub(r"[^a-z0-9]+", " ", _k.lower().replace("'", "").replace("&", " and ")).split())] = _v.lower()
+    add_stores(json.loads((Path(__file__).parent / "stores.json").read_text("utf-8")))
 except Exception as _e:
-    print("stores.json not loaded:", type(_e).__name__, flush=True)
+    print("stores.json not loaded (the built-in list still works):", type(_e).__name__, flush=True)
 print("Store logos:", len(STORES), "stores known", flush=True)
 logos = {}  # website -> (png bytes or None, remembered until)
 logo_lock = threading.Lock()
 
 
 def store_domain(name):
-    """Which website belongs to a typed store name. Only sites listed in stores.json are ever contacted."""
-    t = re.sub(r"[^a-z0-9]+", " ", str(name).lower().replace("'", "").replace("&", " and ")).split()
+    """Which website belongs to a typed store name. Only sites in the list are ever contacted."""
+    t = norm_store(name)
     for cut in range(len(t), 0, -1):  # "Walmart Supercenter #123" -> "walmart"
         d = STORES.get(" ".join(t[:cut]))
         if d:
@@ -878,7 +891,7 @@ def store_domain(name):
 
 def fetch_logo(domain, trace=None, fresh=False):
     """Ask the icon services for a store's icon, keep the best one. Google's tiny answers can be a generic globe,
-    so from Google only 32 px and up counts; DuckDuckGo answers with the site's real icon, so 16 px and up counts."""
+    so from Google only 32 px and up counts; DuckDuckGo and the store's own site give a real icon, so 16 px and up counts."""
     with logo_lock:  # one fetch at a time; everyone else then finds it already remembered
         now = time.time()
         hit = logos.get(domain)
@@ -886,7 +899,10 @@ def fetch_logo(domain, trace=None, fresh=False):
             return hit[0]
         best = None
         for name, url, smallest in (("google", f"https://www.google.com/s2/favicons?domain={domain}&sz=128", 32),
-                                    ("duckduckgo", f"https://icons.duckduckgo.com/ip3/{domain}.ico", 16)):
+                                    ("duckduckgo", f"https://icons.duckduckgo.com/ip3/{domain}.ico", 16),
+                                    ("the store's own site", f"https://{domain}/favicon.ico", 16)):
+            if best is not None and name == "the store's own site":
+                continue  # only a last resort
             try:
                 req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 CheckVault"})
                 raw = urllib.request.urlopen(req, timeout=4).read(300_000)

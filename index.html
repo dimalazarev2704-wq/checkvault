@@ -97,8 +97,12 @@ main{max-width:1040px;margin:0 auto;padding:26px 28px 70px}
 /* add receipt */
 .new{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:6px 22px 22px}
 .new h2{margin-top:16px}
-#form{display:grid;gap:16px 18px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-#form label{display:grid;gap:5px;font-weight:600;font-size:.92rem}
+#form,#eform{display:grid;gap:16px 18px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+#form label,#eform label{display:grid;gap:5px;font-weight:600;font-size:.92rem}
+#edit{width:min(92vw,540px);padding:20px}
+#pk{width:min(92vw,520px);padding:20px}
+.pkrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.pkadd{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 6px}.pkadd input{flex:1;min-width:180px}
 .wide{grid-column:1/-1}
 .pick{display:grid;gap:6px;align-content:start}
 .acts{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -174,10 +178,27 @@ html.enter .fade{animation-delay:.6s}
 <main>
   <h1 id="h1"></h1><p id="sub" class="mute"></p>
   <div id="view"></div>
-  <p class="foot"><button class="lnk" id="devbtn" type="button">Layout</button></p>
+  <p class="foot"><button class="lnk" id="pkbtn" type="button" hidden>Passkeys</button> <button class="lnk" id="devbtn" type="button">Layout</button></p>
 </main>
 <div id="veil"></div>
 <dialog id="viewer"><img alt="Receipt image"></dialog>
+<dialog id="pk"><div>
+  <h2 style="margin:0 0 6px">Passkeys</h2>
+  <p class="mute" style="margin-bottom:10px">Sign in with Face ID, a fingerprint or your device PIN instead of typing. Your password and code still work.</p>
+  <div id="pklist"></div>
+  <div class="pkadd"><input id="pkname" maxlength="40" placeholder="Name it, like Dad's iPhone" aria-label="Passkey name"><button class="btn" id="pkadd" type="button">Add a passkey</button></div>
+  <p id="pkmsg" class="mute" role="status"></p>
+  <div class="camacts"><button class="ghost" id="pkclose" type="button">Close</button></div>
+</div></dialog>
+<dialog id="edit"><form id="eform">
+  <h2 style="margin:0 0 4px;grid-column:1/-1">Edit receipt</h2>
+  <label>Date<input type="date" name="date" required></label>
+  <label>Store<input name="payee" maxlength="100" required></label>
+  <label>Total ($)<input name="amount" type="number" step="0.01" min="0" required></label>
+  <label>Receipt number (optional)<input name="check_number" maxlength="30"></label>
+  <label class="wide">Notes<input name="memo" maxlength="200"></label>
+  <div class="wide bar2"><p id="emsg" class="mute" role="status"></p><span class="acts"><button type="button" class="ghost" id="ecancel">Cancel</button><button class="btn" id="esave">Save changes</button></span></div>
+</form></dialog>
 <dialog id="cam"><video id="vid" autoplay playsinline muted></video><p id="camerr" class="mute" role="alert"></p>
   <div class="camacts"><button class="btn" id="snap">Take photo</button><button class="ghost" id="camx">Cancel</button></div></dialog>
 
@@ -209,7 +230,7 @@ const tile = (c, del, q = "") => `<article class="tile" data-cid="${c.id}">
   <div class="t-amt">${money(c.amount)}</div>
   <div class="t-date">${c.date}</div>
   ${c.check_number || c.memo ? `<div class="t-note">${noteHtml(c, q)}</div>` : ""}
-  ${c.has_back || del ? `<div class="t-acts">${c.has_back ? `<button class="lnk" data-id="${c.id}" data-side="back">2nd photo</button>` : ""}${del && c.has_back ? `<button class="lnk red" data-delback="${c.id}">Delete 2nd photo</button>` : ""}${del ? `<button class="lnk red" data-del="${c.id}">Delete</button>` : ""}</div>` : ""}
+  ${c.has_back || del ? `<div class="t-acts">${c.has_back ? `<button class="lnk" data-id="${c.id}" data-side="back">2nd photo</button>` : ""}${del ? `<button class="lnk" data-edit="${c.id}">Edit</button>` : ""}${del && c.has_back ? `<button class="lnk red" data-delback="${c.id}">Delete 2nd photo</button>` : ""}${del ? `<button class="lnk red" data-del="${c.id}">Delete</button>` : ""}</div>` : ""}
 </article>`;
 
 const mini = c => `<article class="mini">
@@ -338,6 +359,10 @@ document.addEventListener("click", async e => {
   }
   if (d.side) { $("#viewer img").src = `/api/checks/${d.id}/${d.side}`; $("#viewer").showModal(); }
   if (d.cam) openCam(d.cam);
+  if (d.edit) openEdit(d.edit);
+  if (d.pkdel && confirm("Remove this passkey? That device won't be able to use it to sign in any more.")) {
+    await fetch("/api/passkeys/" + encodeURIComponent(d.pkdel), {method: "DELETE"}); pkLoad();
+  }
   if (d.delback && confirm("Delete just the second photo of this receipt? The first photo stays.")) { await fetch(`/api/checks/${d.delback}/back`, {method: "DELETE"}); load(); }
   if (d.del && confirm("Delete this receipt and its photos? This can't be undone.")) { await fetch(`/api/checks/${d.del}`, {method: "DELETE"}); load(); }
   if (t.id === "out") logOut(t);
@@ -361,7 +386,7 @@ $("#viewer").addEventListener("click", () => $("#viewer").close());
 let lgTimer = 0;
 document.addEventListener("input", e => {
   if (e.target.id === "q") list();
-  if (e.target.name === "payee") {  // show the store's logo (or a letter) while you type its name
+  if (e.target.name === "payee" && e.target.form && e.target.form.id === "form") {  // show the store's logo (or a letter) while you type its name
     clearTimeout(lgTimer);
     lgTimer = setTimeout(() => {
       const p = $("#lg-prev"), name = e.target.value.trim();
@@ -374,10 +399,10 @@ document.addEventListener("load", e => { if (e.target.classList && e.target.clas
 document.addEventListener("error", e => { if (e.target.classList && e.target.classList.contains("logo")) e.target.remove(); }, true);
 
 // Gentle warnings before saving. Everything is checked here in the browser against the receipts already loaded.
-function warnings(fd) {
+function warnings(fd, skipId = "") {
   const payee = String(fd.get("payee")).trim().toLowerCase(), amount = Number(fd.get("amount"));
   const date = String(fd.get("date")), num = String(fd.get("check_number")).trim(), out = [];
-  const same = checks.filter(c => c.payee.trim().toLowerCase() === payee);
+  const same = checks.filter(c => c.id !== skipId && c.payee.trim().toLowerCase() === payee);
   const dup = same.find(c => (Math.round(c.amount * 100) === Math.round(amount * 100) && c.date === date) || (num && c.check_number === num));
   if (dup) out.push(`Possible duplicate: you already saved a receipt from ${dup.payee} for ${money(dup.amount)} dated ${dup.date}${dup.check_number ? " (#" + dup.check_number + ")" : ""}.`);
   if (same.length >= 3) {
@@ -389,7 +414,38 @@ function warnings(fd) {
   return out;
 }
 
+let editing = "";
+function openEdit(id) {
+  const c = checks.find(x => x.id === id), f = $("#eform");
+  if (!c) return;
+  editing = id;
+  f.elements.date.value = c.date; f.elements.payee.value = c.payee; f.elements.amount.value = c.amount;
+  f.elements.check_number.value = c.check_number || ""; f.elements.memo.value = c.memo || "";
+  $("#emsg").textContent = "";
+  $("#edit").showModal();
+}
+$("#ecancel").addEventListener("click", () => $("#edit").close());
+async function saveEdit(f) {
+  const fd = new FormData(f), msg = $("#emsg"), btn = $("#esave");
+  const warn = warnings(fd, editing);
+  if (warn.length && !confirm(warn.join("\n\n") + "\n\nSave it anyway?")) { msg.textContent = "Not saved. Fix it and press Save again."; return; }
+  btn.disabled = true; msg.textContent = "Saving...";
+  try {
+    const r = await fetch("/api/checks/" + editing, {method: "PUT", body: fd});
+    if (!r.ok) {
+      let m = "Please check the fields and try again";
+      try { const j = await r.json(); if (typeof j.detail === "string") m = j.detail; }
+      catch (x) { m = "The server had a problem (" + r.status + "). Please try again."; }
+      throw new Error(m);
+    }
+    $("#edit").close();
+    await load();
+  } catch (err) { msg.textContent = "Could not save: " + err.message; }
+  btn.disabled = false;
+}
+
 document.addEventListener("submit", async e => {
+  if (e.target.id === "eform") { e.preventDefault(); saveEdit(e.target); return; }
   if (e.target.id !== "form") return;
   e.preventDefault();
   const f = e.target, fd = new FormData(f), msg = $("#msg"), btn = $("#save");
@@ -436,6 +492,44 @@ $("#snap").addEventListener("click", () => {
 document.addEventListener("change", e => {
   if (e.target.type === "file") $("#ok-" + e.target.name).textContent = e.target.files.length ? "File chosen \u2713" : "";
 });
+
+const toBuf = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)).buffer;
+const toB64u = b => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const jpost = async (url, body) => {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  let d = {}; try { d = await r.json(); } catch (e) {}
+  return {ok: r.ok, status: r.status, d};
+};
+
+async function pkLoad() {
+  let d = {enabled: false, items: []};
+  try { d = await (await fetch("/api/passkeys")).json(); } catch (e) {}
+  $("#pklist").innerHTML = !d.enabled ? '<p class="mute">Passkeys need the site\'s secure address to be set up first.</p>'
+    : d.items.length ? d.items.map(p => `<div class="pkrow"><div><b>${esc(p.name)}</b><div class="t-date">Added ${esc(p.added)}${p.used ? ", last used " + esc(p.used) : ""}</div></div><button class="lnk red" data-pkdel="${esc(p.id)}">Remove</button></div>`).join("")
+    : '<p class="mute">No passkeys yet.</p>';
+  $("#pkadd").disabled = !d.enabled;
+}
+async function pkAdd() {
+  const msg = $("#pkmsg"), btn = $("#pkadd");
+  btn.disabled = true; msg.textContent = "Follow the prompt on your device...";
+  try {
+    const o = await jpost("/api/passkeys/options", {name: $("#pkname").value.trim()});
+    if (!o.ok) throw new Error(o.d.detail || "Passkeys aren't available.");
+    const p = o.d;
+    const cred = await navigator.credentials.create({publicKey: {challenge: toBuf(p.challenge), rp: p.rp, user: {id: toBuf(p.user.id), name: p.user.name, displayName: p.user.displayName},
+      pubKeyCredParams: p.pubKeyCredParams, timeout: p.timeout, attestation: "none", authenticatorSelection: p.authenticatorSelection,
+      excludeCredentials: p.excludeCredentials.map(c => ({type: c.type, id: toBuf(c.id)}))}});
+    const r = cred.response;
+    const res = await jpost("/api/passkeys", {cid: p.cid, id: cred.id, response: {clientDataJSON: toB64u(r.clientDataJSON), attestationObject: toB64u(r.attestationObject)}});
+    if (!res.ok) throw new Error(res.d.detail || "Could not save it.");
+    $("#pkname").value = ""; msg.textContent = "Passkey added."; await pkLoad();
+  } catch (e) { msg.textContent = (e.name === "NotAllowedError" || e.name === "AbortError") ? "Cancelled." : "Could not add it: " + (e.message || e.name); }
+  btn.disabled = false;
+}
+$("#pkbtn").hidden = !window.PublicKeyCredential;
+$("#pkbtn").addEventListener("click", () => { $("#pkmsg").textContent = ""; $("#pk").showModal(); pkLoad(); });
+$("#pkadd").addEventListener("click", pkAdd);
+$("#pkclose").addEventListener("click", () => $("#pk").close());
 
 $("#nav").innerHTML = Object.keys(TITLES).map(k => `<button data-go="${k}" data-nav="${k}">${LABEL[k]}</button>`).join("");
 $("#h1").textContent = TITLES.overview[0];

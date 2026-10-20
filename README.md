@@ -7,6 +7,7 @@ Photograph store receipts, save them encrypted to your own Backblaze B2 bucket (
 - Images and records are encrypted with your key **before** upload, then S3 encrypts them again at rest
 - Nothing is public: images only load through the logged-in app
 - Search by store, total, receipt number, or notes
+- Edit a receipt's store, total, date, number or notes without deleting it (the photos stay as they are)
 
 ## Setup
 ```bash
@@ -96,3 +97,13 @@ When you type a store such as Target or Walmart, a small logo shows next to its 
 The stores it knows are built into the site, and `stores.json` only adds to them (or changes one). To add a store, open `stores.json` on GitHub, click the pencil, add a line like `"food lion": "foodlion.com"` (the name in lowercase, no punctuation, then the website), and commit. Only websites in that file are ever contacted. The site asks Google's icon service, then DuckDuckGo's, then the store's own website for the icon, so those services see which store websites are looked up, from the site's address and not yours. No receipt details, photos or totals are sent.
 
 If a logo doesn't show, sign in and open `/api/logo?store=Walmart&debug=1` on your site. It lists what each icon source answered. The Render Logs also say `Store logos: N stores known` at startup, and `LOGO: no usable icon for <website>` whenever a store's icon could not be found.
+
+## Passkeys
+
+A passkey lets you open the vault with Face ID, a fingerprint, or your device PIN in one tap. It works **next to** the password and code or Telegram approval, never instead of them, so losing a device can't lock you out.
+
+- **Add one:** sign in the usual way, press **Passkeys** at the bottom of the dashboard, type a name like "Dad's iPhone", and press **Add a passkey**. Everyone on the Telegram list is told when a passkey is added, removed or used.
+- **Use one:** on the login page, press **Use a passkey** on the vault door.
+- **It needs the site's secure address.** On Render that is automatic. A passkey only works on exactly that address, so if you ever move to a different address, add the passkeys again (the password and code keep working).
+- **The device checks it's you.** The site refuses a passkey unless the device confirmed your face, fingerprint, or PIN.
+- Passkeys are saved (encrypted) in your Backblaze bucket. Some sync through iCloud Keychain, Google Password Manager, or Bitwarden, which then become part of what protects them.

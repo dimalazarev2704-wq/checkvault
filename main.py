@@ -1,9 +1,12 @@
-import hashlib, hmac, io, ipaddress, json, math, os, re, secrets, threading, time, urllib.parse, urllib.request, uuid
+import base64, hashlib, hmac, io, ipaddress, json, math, os, re, secrets, threading, time, urllib.parse, urllib.request, uuid
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 import pyotp
 from PIL import Image, ImageOps
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
@@ -299,7 +302,18 @@ def load_bans():
         print("BANS load failed:", type(e).__name__, flush=True)
 
 
+_loading = {"on": False}  # true while the saved bans, added time and passkeys are being read at start-up
+
+
+def wait_loaded():
+    """Saving before the lists are read would overwrite them with a shorter list, so wait (a few seconds at most)."""
+    t = time.time()
+    while _loading["on"] and time.time() - t < 8:
+        time.sleep(0.05)
+
+
 def save_bans():
+    wait_loaded()
     try:
         put(BANS, fernet.encrypt(json.dumps([{"dev": d, **v} for d, v in banned.items()]).encode()))
         return True
@@ -308,6 +322,7 @@ def save_bans():
 
 
 def save_locks():
+    wait_loaded()
     now = time.time()
     try:
         until = {k: v for k, v in extra.items() if v > now}
@@ -579,7 +594,8 @@ def admin_callback(cb):
 
 def auth(request: Request):
     path = request.url.path
-    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/login/lock", "/telegram/webhook", "/device.js"):
+    if path in ("/login", "/login/people", "/login/ask", "/login/status", "/login/lock", "/login/passkey", "/login/passkey/options",
+                "/login/passkey/available", "/telegram/webhook", "/device.js"):
         return
     try:
         signer.loads(request.cookies.get("session", ""), max_age=SESSION_SECONDS)
@@ -786,12 +802,17 @@ def _set_webhook():
 
 
 def _load_saved_state():
-    load_bans()
-    load_locks()
+    try:
+        load_bans()
+        load_locks()
+        load_passkeys()
+    finally:
+        _loading["on"] = False
 
 
 @app.on_event("startup")
 def bans_startup():
+    _loading["on"] = True
     threading.Thread(target=_load_saved_state, daemon=True).start()
 
 
@@ -799,6 +820,314 @@ def bans_startup():
 def register_webhook():
     if TG_TOKEN and PUBLIC_URL:
         threading.Thread(target=_set_webhook, daemon=True).start()
+
+
+# ---- passkeys (WebAuthn): sign in with Face ID, a fingerprint or a device PIN, next to the password + code ----
+PASSKEYS_FILE = "passkeys.enc"
+RP_ORIGIN = PUBLIC_URL  # e.g. https://checkvault.onrender.com; a passkey only works on exactly this address
+RP_ID = urllib.parse.urlparse(PUBLIC_URL).hostname or ""
+passkeys = {}    # credential id (base64url) -> {"alg", "pub" (base64 DER), "count", "name", "added", "used"}
+challenges = {}  # challenge id -> {"c", "kind", "dev", "name", "exp"}: each is good for one try, for 3 minutes
+
+
+def passkeys_ready():
+    return bool(RP_ID and PUBLIC_URL.startswith("https://"))
+
+
+print("Passkeys:", f"ready for {RP_ID}" if passkeys_ready() else "off (the site's https address is not known)", flush=True)
+
+
+def b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+def unb64u(s):
+    if not isinstance(s, str) or not s or len(s) > 20000 or not re.fullmatch(r"[A-Za-z0-9_-]+", s):
+        raise ValueError("bad base64")
+    return base64.b64decode(s.replace("-", "+").replace("_", "/") + "=" * (-len(s) % 4), validate=True)
+
+
+def cbor(data, i=0, depth=0):
+    """Read one CBOR item (the small part of CBOR that WebAuthn uses). Returns (value, next position)."""
+    if depth > 8 or i >= len(data):
+        raise ValueError("bad cbor")
+    major, info = data[i] >> 5, data[i] & 31
+    i += 1
+    if major == 7 and info in (20, 21, 22):
+        return {20: False, 21: True, 22: None}[info], i
+    if info < 24:
+        n = info
+    elif info in (24, 25, 26, 27):
+        size = 1 << (info - 24)
+        if i + size > len(data):
+            raise ValueError("bad cbor")
+        n = int.from_bytes(data[i:i + size], "big")
+        i += size
+    else:
+        raise ValueError("unsupported cbor")
+    if major == 0:
+        return n, i
+    if major == 1:
+        return -1 - n, i
+    if major in (2, 3):
+        if i + n > len(data):
+            raise ValueError("bad cbor")
+        raw = data[i:i + n]
+        return (raw if major == 2 else raw.decode("utf-8")), i + n
+    if major in (4, 5) and n <= 64:
+        out = [] if major == 4 else {}
+        for _ in range(n):
+            k, i = cbor(data, i, depth + 1)
+            if major == 4:
+                out.append(k)
+            else:
+                v, i = cbor(data, i, depth + 1)
+                if isinstance(k, (list, dict)):
+                    raise ValueError("bad cbor key")
+                out[k] = v
+        return out, i
+    raise ValueError("unsupported cbor")
+
+
+def parse_auth_data(ad, with_credential):
+    if len(ad) < 37:
+        raise ValueError("short authenticator data")
+    out = {"rp": ad[:32], "flags": ad[32], "count": int.from_bytes(ad[33:37], "big")}
+    if with_credential:
+        if not out["flags"] & 0x40 or len(ad) < 55:
+            raise ValueError("no credential in the answer")
+        n = int.from_bytes(ad[53:55], "big")
+        if n == 0 or n > 1023 or len(ad) < 55 + n:
+            raise ValueError("bad credential id")
+        out["cred_id"] = ad[55:55 + n]
+        out["key"], _ = cbor(ad, 55 + n)
+    return out
+
+
+def cose_to_public(key):
+    """The public key, as bytes, for the two kinds phones and computers use: ES256 (P-256) and RS256."""
+    if not isinstance(key, dict):
+        raise ValueError("bad key")
+    alg = key.get(3)
+    if key.get(1) == 2 and alg == -7 and key.get(-1) == 1 and isinstance(key.get(-2), bytes) and isinstance(key.get(-3), bytes) \
+            and len(key[-2]) == 32 and len(key[-3]) == 32:
+        pub = ec.EllipticCurvePublicNumbers(int.from_bytes(key[-2], "big"), int.from_bytes(key[-3], "big"), ec.SECP256R1()).public_key()
+    elif key.get(1) == 3 and alg == -257 and isinstance(key.get(-1), bytes) and isinstance(key.get(-2), bytes):
+        pub = rsa.RSAPublicNumbers(int.from_bytes(key[-2], "big"), int.from_bytes(key[-1], "big")).public_key()
+        if pub.key_size < 2048:
+            raise ValueError("key too small")
+    else:
+        raise ValueError("unsupported key type")
+    return alg, pub.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+def check_client_data(raw, kind, challenge):
+    cd = json.loads(raw.decode("utf-8"))
+    if cd.get("type") != kind or cd.get("origin") != RP_ORIGIN or cd.get("crossOrigin") not in (None, False):
+        raise ValueError("wrong site or kind")
+    if not hmac.compare_digest(str(cd.get("challenge")).encode(), challenge.encode()):
+        raise ValueError("wrong challenge")
+
+
+opt_hits = {}  # address -> times it asked for a sign-in challenge in the last minute
+
+
+def calm_enough(ip, limit=20, per=60):
+    now = time.time()
+    hits = [t for t in opt_hits.get(ip, []) if now - t < per]
+    if len(hits) >= limit:
+        opt_hits[ip] = hits
+        return False
+    opt_hits[ip] = hits + [now]
+    if len(opt_hits) > 1000:
+        for k in [k for k, v in opt_hits.items() if not v or now - v[-1] >= per]:
+            del opt_hits[k]
+    return True
+
+
+def new_challenge(kind, dev, name=""):
+    now = time.time()
+    for k in [k for k, v in challenges.items() if v["exp"] < now]:
+        del challenges[k]
+    mine = sorted((k for k, v in challenges.items() if v["dev"] == dev and v["kind"] == kind), key=lambda k: challenges[k]["exp"])
+    for k in mine[:max(0, len(mine) - 4)]:  # at most 5 open per device, counting the one made below
+        del challenges[k]
+    if len(challenges) > 300:  # a flood pushes out the OLDEST requests; it can never refuse a real person
+        for k in sorted(challenges, key=lambda k: challenges[k]["exp"])[:100]:
+            del challenges[k]
+    cid, ch = secrets.token_urlsafe(16), b64u(secrets.token_bytes(32))
+    challenges[cid] = {"c": ch, "kind": kind, "dev": dev, "name": name[:40], "exp": now + 180}
+    return cid, ch
+
+
+def take_challenge(cid, kind, dev):
+    v = challenges.pop(str(cid), None)  # used up even if the answer turns out wrong
+    if not v or v["kind"] != kind or v["dev"] != dev or v["exp"] < time.time():
+        raise ValueError("that request expired")
+    return v
+
+
+def save_passkeys():
+    wait_loaded()
+    try:
+        put(PASSKEYS_FILE, fernet.encrypt(json.dumps(passkeys).encode()))
+        return True
+    except HTTPException:
+        return False
+
+
+def load_passkeys():
+    try:
+        for k, v in json.loads(fernet.decrypt(get(PASSKEYS_FILE))).items():
+            if isinstance(v, dict) and v.get("pub") and v.get("alg") in (-7, -257):
+                passkeys[k] = {"alg": v["alg"], "pub": v["pub"], "count": int(v.get("count", 0)), "name": str(v.get("name", "Passkey"))[:40],
+                               "added": str(v.get("added", "")), "used": str(v.get("used", ""))}
+    except HTTPException as e:
+        if e.status_code != 404:
+            print("PASSKEYS load failed:", e.detail, flush=True)
+    except Exception as e:
+        print("PASSKEYS load failed:", type(e).__name__, flush=True)
+
+
+def register_passkey(cid, cred_id, client_json, attestation, dev):
+    chal = take_challenge(cid, "create", dev)
+    check_client_data(client_json, "webauthn.create", chal["c"])
+    att, _ = cbor(attestation)
+    if not isinstance(att, dict) or not isinstance(att.get("authData"), bytes):
+        raise ValueError("bad attestation")
+    ad = parse_auth_data(att["authData"], True)
+    if not hmac.compare_digest(ad["rp"], hashlib.sha256(RP_ID.encode()).digest()):
+        raise ValueError("made for another site")
+    if ad["flags"] & 0x05 != 0x05:
+        raise ValueError("the device did not check your face, fingerprint or PIN")
+    pid = b64u(ad["cred_id"])
+    if pid != cred_id:
+        raise ValueError("credential id mismatch")
+    if pid in passkeys:
+        raise ValueError("already added")
+    alg, der = cose_to_public(ad["key"])
+    passkeys[pid] = {"alg": alg, "pub": base64.b64encode(der).decode(), "count": ad["count"], "name": chal["name"] or "Passkey",
+                     "added": stamp(), "used": ""}
+    if not save_passkeys():
+        del passkeys[pid]
+        raise ValueError("could not save")
+    return pid
+
+
+def verify_passkey(cid, cred_id, client_json, auth_data, signature, dev):
+    chal = take_challenge(cid, "get", dev)
+    rec = passkeys.get(cred_id)
+    if rec is None:
+        raise ValueError("unknown passkey")
+    check_client_data(client_json, "webauthn.get", chal["c"])
+    ad = parse_auth_data(auth_data, False)
+    if not hmac.compare_digest(ad["rp"], hashlib.sha256(RP_ID.encode()).digest()):
+        raise ValueError("made for another site")
+    if ad["flags"] & 0x05 != 0x05:
+        raise ValueError("the device did not check your face, fingerprint or PIN")
+    pub = serialization.load_der_public_key(base64.b64decode(rec["pub"]))
+    signed = auth_data + hashlib.sha256(client_json).digest()
+    try:
+        if rec["alg"] == -7:
+            pub.verify(signature, signed, ec.ECDSA(hashes.SHA256()))
+        else:
+            pub.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
+    except InvalidSignature:
+        raise ValueError("bad signature")
+    if rec["count"] and ad["count"] <= rec["count"]:
+        raise ValueError("the sign-in counter went backwards: this passkey may be a copy")
+    rec["count"], rec["used"] = max(rec["count"], ad["count"]), stamp()
+    save_passkeys()
+    return rec
+
+
+def notify_all(text):
+    if TG_TOKEN and TG_USERS:
+        threading.Thread(target=lambda: [tg_call("sendMessage", {"chat_id": c, "text": text}) for c in TG_USERS.values()], daemon=True).start()
+
+
+@app.get("/login/passkey/available")
+def passkey_available():
+    return {"available": passkeys_ready() and bool(passkeys)}
+
+
+@app.post("/login/passkey/options")
+def passkey_login_options(request: Request):
+    ip, dev = ip_of(request), dev_of(request)
+    if locked(dev, ip):
+        raise locked_error(dev, ip)
+    if not passkeys_ready() or not passkeys:
+        raise HTTPException(400, "No passkeys are set up yet.")
+    if not calm_enough(ip):
+        raise HTTPException(429, "Too many tries. Wait a minute.")
+    cid, ch = new_challenge("get", dev)
+    return {"cid": cid, "challenge": ch, "rpId": RP_ID, "timeout": 120000, "userVerification": "required"}
+
+
+@app.post("/login/passkey")
+def passkey_login(request: Request, data: dict = Body(...)):
+    ip, dev = ip_of(request), dev_of(request)
+    if locked(dev, ip):
+        raise locked_error(dev, ip)
+    try:
+        r = data.get("response") or {}
+        rec = verify_passkey(data.get("cid"), data.get("id"), unb64u(r.get("clientDataJSON")), unb64u(r.get("authenticatorData")),
+                             unb64u(r.get("signature")), dev)
+    except Exception:
+        note_fail(dev, ip)
+        raise HTTPException(401, "That passkey didn't work")
+    fails.pop(dev, None)
+    notify_all(f"Passkey sign-in: {rec['name']}\nTime: {stamp()}\nFrom: {ip}\nCode: {dev_code(dev)}")
+    return start_session()
+
+
+def passkey_list():
+    return {"enabled": passkeys_ready(), "items": [{"id": k, "name": v["name"], "added": v["added"], "used": v["used"]} for k, v in passkeys.items()]}
+
+
+@app.get("/api/passkeys")
+def passkeys_get():
+    return passkey_list()
+
+
+@app.post("/api/passkeys/options")
+def passkey_register_options(request: Request, data: dict = Body(None)):
+    if not passkeys_ready():
+        raise HTTPException(400, "Passkeys need the site's secure address to be set up first.")
+    label = str((data or {}).get("name", "")).strip()[:40] or "CheckVault passkey"
+    cid, ch = new_challenge("create", dev_of(request), label)
+    # a different user id each time, so adding a second passkey never overwrites the first one on the same device
+    return {"cid": cid, "challenge": ch, "rp": {"name": "CheckVault", "id": RP_ID},
+            "user": {"id": b64u(secrets.token_bytes(16)), "name": label, "displayName": label},
+            "pubKeyCredParams": [{"type": "public-key", "alg": -7}, {"type": "public-key", "alg": -257}], "timeout": 120000,
+            "attestation": "none",
+            "authenticatorSelection": {"residentKey": "required", "requireResidentKey": True, "userVerification": "required"},
+            "excludeCredentials": [{"type": "public-key", "id": k} for k in passkeys]}
+
+
+@app.post("/api/passkeys")
+def passkey_register(request: Request, data: dict = Body(...)):
+    try:
+        r = data.get("response") or {}
+        pid = register_passkey(data.get("cid"), data.get("id"), unb64u(r.get("clientDataJSON")), unb64u(r.get("attestationObject")),
+                               dev_of(request))
+    except Exception as e:
+        print("PASSKEY add failed:", type(e).__name__, str(e)[:100], flush=True)
+        raise HTTPException(400, "That passkey could not be saved. Try again.")
+    notify_all(f"A passkey was added: {passkeys[pid]['name']}\nTime: {stamp()}")
+    return passkey_list()
+
+
+@app.delete("/api/passkeys/{pid}")
+def passkey_remove(pid: str):
+    rec = passkeys.pop(pid, None)
+    if rec is None:
+        raise HTTPException(404, "Not found")
+    if not save_passkeys():
+        passkeys[pid] = rec
+        raise HTTPException(502, "Could not save the change. Try again.")
+    notify_all(f"A passkey was removed: {rec['name']}\nTime: {stamp()}")
+    return passkey_list()
 
 
 @app.post("/logout")
@@ -946,12 +1275,8 @@ def store_logo(store: str = "", debug: str = ""):
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
 
-@app.post("/api/checks")
-def add_check(
-    date: str = Form(...), payee: str = Form(...), amount: float = Form(...),
-    check_number: str = Form(""), memo: str = Form(""),
-    front: UploadFile = File(...), back: UploadFile = File(None),
-):
+def clean_fields(date, payee, amount, check_number, memo):
+    """The same rules for a new receipt and for an edited one."""
     if not (math.isfinite(amount) and 0 <= amount < 1e9):
         raise HTTPException(400, "Amount must be a normal positive number")
     try:
@@ -961,6 +1286,16 @@ def add_check(
     payee, check_number, memo = payee.strip()[:100], check_number.strip()[:30], memo.strip()[:200]
     if not payee:
         raise HTTPException(400, "Store name is required")
+    return payee, round(amount, 2), check_number, memo
+
+
+@app.post("/api/checks")
+def add_check(
+    date: str = Form(...), payee: str = Form(...), amount: float = Form(...),
+    check_number: str = Form(""), memo: str = Form(""),
+    front: UploadFile = File(...), back: UploadFile = File(None),
+):
+    payee, amount, check_number, memo = clean_fields(date, payee, amount, check_number, memo)
     cid = str(uuid.uuid4())
     parts = {}
     for side, f in (("front", front), ("back", back)):
@@ -982,6 +1317,21 @@ def add_check(
     recs.append(rec)
     save_index(recs)
     return rec
+
+
+@app.put("/api/checks/{cid}")
+def edit_check(cid: str, date: str = Form(...), payee: str = Form(...), amount: float = Form(...),
+               check_number: str = Form(""), memo: str = Form("")):
+    """Change a receipt's details. The photos are not touched."""
+    cid = check_id(cid)
+    payee, amount, check_number, memo = clean_fields(date, payee, amount, check_number, memo)
+    recs = load_index()
+    for r in recs:
+        if r["id"] == cid:
+            r.update(date=date, payee=payee, amount=amount, check_number=check_number, memo=memo)
+            save_index(recs)
+            return r
+    raise HTTPException(404, "Not found")
 
 
 @app.get("/api/checks")
